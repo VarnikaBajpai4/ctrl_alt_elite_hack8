@@ -1,0 +1,6 @@
+venv/
+y_test.dat
+y_train.dat 
+X_test.dat 
+X_train.dat 
+__pycache__/
