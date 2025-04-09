@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 ### Testing the Setup
 
-After installing the requirements, you can test it by running the files `predict.py` and `sample_usage.py` as given below.
+After installing the requirements, you can test it by running the files `predict.py` and `sample_usage.py` as shown in the commands below.
 
 ### Training Command
 
