@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Output directories
+main/output/*
+!main/output/.gitkeep
+main/data/*
+!main/data/.gitkeep
+
+# EMBER Models
+ember/ember_model_2018/
+ember/ember_model_2018_2/
+ember/ember_model_final.txt
+ember/ember_model_*.txt
+ember/ember_model_*.json
+
+# Logs
+*.log
+
+# System Files
+.DS_Store
+Thumbs.db 
