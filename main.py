@@ -56,6 +56,8 @@ def analyze_with_gemini(behaviors, file_info, model):
     3. Registry modifications that suggest persistence
     4. Unusual network connections or data exfiltration attempts
     5. Any other behaviors that indicate malicious intent
+
+    Pls note that you need to look for SUSPICIOUS STUFF. All exe files add files. If you notice something SUPSPICIOUS ONLY THEN MARK IT AS MALICIOUS or SUSPICIOUS. We don't want to falsely flag benign files.
     
     Important notes:
     - Some legitimate applications like VSCode, IDEs, and development tools may modify files and create processes as part of their normal operation
