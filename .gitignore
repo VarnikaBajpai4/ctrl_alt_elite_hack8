@@ -42,11 +42,8 @@ main/data/*
 !main/data/.gitkeep
 
 # EMBER Models
-ember/ember_model_2018/
-ember/ember_model_2018_2/
-ember/ember_model_final.txt
-ember/ember_model_*.txt
-ember/ember_model_*.json
+ember/models/*
+!ember/models/.gitkeep
 
 # Logs
 *.log
