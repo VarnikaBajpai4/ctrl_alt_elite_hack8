@@ -37,7 +37,7 @@ def configure_gemini():
             st.stop()
     
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-1.5-pro')
+    return genai.GenerativeModel('gemini-1.5-flash')
 
 # Function to analyze behaviors using Gemini
 def analyze_with_gemini(behaviors, file_info, model):
@@ -50,21 +50,47 @@ def analyze_with_gemini(behaviors, file_info, model):
     Behavioral Data:
     {json.dumps(behaviors, indent=2)}
     
-    Please analyze this data for signs of:
-    1. Suspicious process activities (unusual process creation, injection techniques)
-    2. Suspicious file operations (creating executables, modifying system files)
-    3. Registry modifications that suggest persistence
-    4. Unusual network connections or data exfiltration attempts
-    5. Any other behaviors that indicate malicious intent
+    Please analyze this data:
 
-    Pls note that you need to look for SUSPICIOUS STUFF. All exe files add files. If you notice something SUPSPICIOUS ONLY THEN MARK IT AS MALICIOUS or SUSPICIOUS. We don't want to falsely flag benign files.
+    DO NOT FALSELY LABEL ANY STUFF AS MALICIOUS OR SUSPICIOUS UNLESS ANY DEFINITIVE MALICIOUS ACTION. Pls note that you need to look for SUSPICIOUS STUFF. All exe files add files. If you notice something SERIOUSLY SUSPICIOUS LIKE SOME REQUEST TO AN IP THAT LOOKS WEIRD ONLY THEN MARK IT AS MALICIOUS or SUSPICIOUS. We don't want to falsely flag benign files
+    STUFF LIKE THIS IS NOT MALICIOUS: Execution from the temporary directory, Creation and deletion of multiple temporary files and directories, Obfuscated command-line arguments passed to the child process tmpf0f7nl8t.tmp., Parent process chain involving cmd.exe, Connection to unknown external IP address (20.7.1.246) on port 443( not every IP is harmful you know), Large file size (4.4 MB) for what appears to be a bootstrapper, Creation of a complex temporary directory structure and subsequent deletion of its contents, Network connections established in other processes.
     
-    Important notes:
-    - Some legitimate applications like VSCode, IDEs, and development tools may modify files and create processes as part of their normal operation
-    - Consider the context of the file type and expected behavior
-    - Trust your instinct and look for patterns that seem genuinely suspicious
-    - Focus on behaviors that are clearly indicative of malicious intent rather than benign operations
-    
+    You are a malware analysis expert tasked with evaluating dynamic analysis results to determine if a file is benign, suspicious, or malicious. Follow these guidelines:
+
+    CLASSIFICATION CRITERIA:
+
+    BENIGN (Default classification):
+    - Network connections to well-known legitimate domains or a small number of IPs (1-5) with clear purpose
+    - Expected registry modifications limited to the software's own settings
+    - File operations primarily in the application's directory or standard user folders
+    - Normal process creation patterns related to the application's function
+
+    SUSPICIOUS (Requires multiple indicators):
+    - Connections to unusual domains or IPs with no clear legitimate purpose
+    - Registry modifications touching autorun locations but with clear attribution
+    - File operations creating executables outside application directories
+    - Attempts to modify security settings but failing or requiring user permission
+    - Unusual process relationships or short-lived processes
+
+    MALICIOUS (Strong indicators needed):
+    - High frequency network connections to multiple different IPs/domains (10+ in short period)
+    - Connections to known malicious infrastructure or unusual communication patterns (beaconing)
+    - Registry modifications that disable security features or establish persistence
+    - File operations involving self-replication, hidden files, or tampering with system files
+    - Process injection, privilege escalation, or attempts to kill security software
+    - Encrypted or obfuscated command execution
+    - Unexplained data exfiltration
+
+    ANALYSIS INSTRUCTIONS:
+    1. Always begin with the assumption that the file is benign
+    2. Evaluate the dynamic analysis data in context of what the application claims to do
+    3. Recognize that installers, updaters, and some applications legitimately make system changes
+    4. Focus on combinations of suspicious behaviors rather than individual actions
+    5. Consider the severity and purpose of each observed activity
+    6. Provide clear justification for your classification with specific observations
+    7. Recommend additional analysis if behavior is ambiguous
+
+
     Provide your analysis in this JSON format:
     {{
         "verdict": "malicious|suspicious|benign",
@@ -210,8 +236,7 @@ def main():
     
     # File upload
     uploaded_file = st.file_uploader("Choose a file to analyze", 
-                                    type=["exe", "bat", "cmd", "py", "js", "sh", "ps1", "vbs", "jar",
-                                         "docx", "xlsx", "pptx", "pdf", "csv", "txt"])
+                                    )
     
     # Analysis timeout setting
     timeout = st.slider("Analysis timeout (seconds)", min_value=5, max_value=60, value=30)
