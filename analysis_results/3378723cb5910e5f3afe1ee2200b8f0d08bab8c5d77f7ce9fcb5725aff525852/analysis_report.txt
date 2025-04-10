@@ -1,0 +1,7 @@
+File: autorun.inf
+SHA-256: 3378723cb5910e5f3afe1ee2200b8f0d08bab8c5d77f7ce9fcb5725aff525852
+Analysis Time: 2025-04-10 17:32:12.336739
+Verdict: BENIGN
+Score: 0/100
+
+Suspicious Activities:

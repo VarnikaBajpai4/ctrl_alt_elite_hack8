@@ -1,0 +1,137 @@
+File: 6c2607c0799e9babf8fffbfe7f1296d53d2701f458eafcac71dc1d26f65392a4.exe
+SHA-256: 6c2607c0799e9babf8fffbfe7f1296d53d2701f458eafcac71dc1d26f65392a4
+Analysis Time: 2025-04-10 18:42:15.352585
+Verdict: MALICIOUS
+Score: 2515/100
+
+Suspicious Activities:
+- Executable made 3 network connections
+- Connected to external IP: 57.155.141.115
+- Connected to external IP: 2620:1ec:29:1::68
+- Connected to external IP: 151.101.38.172
+- Created 121 new processes
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+- Possible persistence mechanism: c:\windows\system32\runtimebroker.exe -embedding
+
+Malicious Indicators:
+- Outbound network activity
+- Connected to 3 different IPs
+- Excessive process creation (121 processes)
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence
+- Attempting to establish persistence

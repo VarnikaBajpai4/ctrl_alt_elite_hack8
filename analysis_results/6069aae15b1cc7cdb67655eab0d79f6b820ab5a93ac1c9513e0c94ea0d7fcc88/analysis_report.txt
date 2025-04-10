@@ -1,0 +1,8 @@
+File: VSCodeUserSetup-x64-1.99.1.exe
+SHA-256: 6069aae15b1cc7cdb67655eab0d79f6b820ab5a93ac1c9513e0c94ea0d7fcc88
+Analysis Time: 2025-04-10 18:51:26.272120
+Verdict: BENIGN
+Score: 20/100
+
+Suspicious Activities:
+- Created 7 new processes
