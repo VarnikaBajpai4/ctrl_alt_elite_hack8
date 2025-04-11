@@ -1,0 +1,45 @@
+import socket
+import os
+import threading
+from connection_handler import handle_client
+  
+HOST = '0.0.0.0'
+PORT = 12345
+SAVE_DIR = os.path.join(os.environ['USERPROFILE'], 'Downloads', 'VMTransfers')
+
+def main():
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    
+    print(f"=== VM File Transfer Listener ===")
+    print(f"Saving files to: {SAVE_DIR}")
+    
+    hostname = socket.gethostname()
+    ip_address = socket.gethostbyname(hostname)
+    
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            s.bind((HOST, PORT))
+            s.listen(5)
+            print(f"Listening on {ip_address}:{PORT}...")
+            
+            while True:
+                try:
+                    conn, addr = s.accept()
+                    client_thread = threading.Thread(target=handle_client, args=(conn, addr, SAVE_DIR))
+                    client_thread.daemon = True
+                    client_thread.start()
+                except Exception as e:
+                    print(f"Error accepting connection: {str(e)}")
+        except Exception as e:
+            print(f"Server error: {str(e)}")
+            if "address already in use" in str(e).lower():
+                print("Port is already in use. Make sure no other instance is running.")
+            return
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nShutting down server...")
