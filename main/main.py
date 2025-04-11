@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import docker
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -118,9 +119,43 @@ async def analyze_document(file_path: Path, file_type: str) -> Dict[str, Any]:
             "error": f"Document analysis failed: {str(e)}"
         }
 
-async def analyze_executable(file_path: Path, out_dir: Path) -> Dict[str, Any]:
-    """Analyze executable files using the existing pipeline"""
+async def run_ember_analysis(file_path: Path) -> Dict[str, Any]:
+    """Run EMBER analysis on the executable"""
     try:
+        logger.info(f"[EMBER] Starting analysis at {datetime.now().strftime('%H:%M:%S')}")
+        data_path = str(DATA_DIR).replace('\\', '/')
+        ember_proc = subprocess.run(
+            ["docker", "run", "--rm",
+             "-v", f"{data_path}:/data",
+             "-v", f"{EMBER_DIR}:/ember",
+             "ember",
+             "python", "/ember/predict.py", f"/data/{file_path.name}"],
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"[EMBER] Analysis completed at {datetime.now().strftime('%H:%M:%S')}")
+        
+        if ember_proc.returncode != 0:
+            raise Exception(f"EMBER prediction failed: {ember_proc.stderr}")
+            
+        ember_res = json.loads(ember_proc.stdout.strip())
+        return {
+            "ember_probability": round(float(ember_res["probability"]), 5),
+            "ember_sha256": ember_res.get("sha256", ""),
+            "ember_important_features": ember_res.get("features", {})
+        }
+    except Exception as e:
+        logger.error(f"[EMBER] Analysis failed: {str(e)}")
+        return {
+            "ember_probability": 0.0,
+            "ember_sha256": "",
+            "ember_important_features": {}
+        }
+
+async def run_retdec_gemini_analysis(file_path: Path, out_dir: Path) -> Dict[str, Any]:
+    """Run RetDec decompilation and Gemini analysis"""
+    try:
+        logger.info(f"[RetDec] Starting analysis at {datetime.now().strftime('%H:%M:%S')}")
         # Convert Windows paths to Docker-compatible paths
         data_path = str(DATA_DIR).replace('\\', '/')
         output_path = str(OUTPUT_DIR).replace('\\', '/')
@@ -137,8 +172,9 @@ async def analyze_executable(file_path: Path, out_dir: Path) -> Dict[str, Any]:
             "-o", f"/output/{output_subdir}/{file_path.stem}.c"
         ]
         
-        logger.debug(f"Running Docker command: {' '.join(cmd)}")
+        logger.debug(f"[RetDec] Running Docker command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
+        logger.info(f"[RetDec] Decompilation completed at {datetime.now().strftime('%H:%M:%S')}")
         
         if result.returncode != 0:
             error_msg = f"RetDec decompilation failed with return code {result.returncode}\n"
@@ -154,50 +190,20 @@ async def analyze_executable(file_path: Path, out_dir: Path) -> Dict[str, Any]:
             raise Exception(f"No output files were created in {out_dir}")
             
         # Run RetDec feature extraction
+        logger.info(f"[RetDec] Starting feature extraction at {datetime.now().strftime('%H:%M:%S')}")
         retbec_proc = subprocess.run(
             [sys.executable, str(RETBEC_DIR / "retbec_check.py"), str(out_dir)],
             capture_output=True,
             text=True
         )
+        logger.info(f"[RetDec] Feature extraction completed at {datetime.now().strftime('%H:%M:%S')}")
+        
         if retbec_proc.returncode != 0:
             raise Exception(f"RetDec feature extraction failed: {retbec_proc.stderr}")
             
         retbec_res = json.loads(retbec_proc.stdout.strip())
         if not retbec_res.get("retbec_success"):
-            return {
-                "error": "Failed to extract features from RetDec output"
-            }
-            
-        # Run EMBER prediction
-        ember_proc = subprocess.run(
-            ["docker", "run", "--rm",
-             "-v", f"{data_path}:/data",
-             "-v", f"{EMBER_DIR}:/ember",
-             "ember",
-             "python", "/ember/predict.py", f"/data/{file_path.name}"],
-            capture_output=True,
-            text=True
-        )
-        if ember_proc.returncode != 0:
-            raise Exception(f"EMBER prediction failed: {ember_proc.stderr}")
-            
-        ember_res = json.loads(ember_proc.stdout.strip())
-        ember_prob = round(float(ember_res["probability"]), 5)
-        
-        # Run Gemini analysis
-        gemini_proc = subprocess.run(
-            [sys.executable, str(RETBEC_DIR / "malware_analysis.py"), str(out_dir)],
-            capture_output=True,
-            text=True
-        )
-        if gemini_proc.returncode != 0:
-            raise Exception(f"Gemini analysis failed: {gemini_proc.stderr}")
-            
-        gemini_res = json.loads(gemini_proc.stdout.strip())
-        if "error" in gemini_res:
-            return {
-                "error": gemini_res["error"]
-            }
+            raise Exception("Failed to extract features from RetDec output")
             
         # Extract important features from RetDec
         retdec_features = retbec_res["retbec_features"]
@@ -209,11 +215,24 @@ async def analyze_executable(file_path: Path, out_dir: Path) -> Dict[str, Any]:
             "LoadLibrary": retdec_features.get("kw_LoadLibrary", False)
         }
         
+        # Run Gemini analysis
+        logger.info(f"[Gemini] Starting analysis at {datetime.now().strftime('%H:%M:%S')}")
+        gemini_proc = subprocess.run(
+            [sys.executable, str(RETBEC_DIR / "malware_analysis.py"), str(out_dir)],
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"[Gemini] Analysis completed at {datetime.now().strftime('%H:%M:%S')}")
+        
+        if gemini_proc.returncode != 0:
+            raise Exception(f"Gemini analysis failed: {gemini_proc.stderr}")
+            
+        gemini_res = json.loads(gemini_proc.stdout.strip())
+        if "error" in gemini_res:
+            raise Exception(gemini_res["error"])
+            
         return {
-            "ember_probability": ember_prob,
             "gemini_probability": round(float(gemini_res.get("malware_probability", 0.0)), 5),
-            "ember_sha256": ember_res.get("sha256", ""),
-            "ember_important_features": ember_res.get("features", {}),
             "retdec_architecture": retdec_features.get("architecture", {}),
             "retdec_file_format": retdec_features.get("file_format", ""),
             "retdec_imports": retdec_features.get("retdec_imports", {}),
@@ -221,7 +240,38 @@ async def analyze_executable(file_path: Path, out_dir: Path) -> Dict[str, Any]:
             "suspicious_indicators": gemini_res.get("suspicious_indicators", []),
             "behavioral_patterns": gemini_res.get("behavioral_patterns", []),
             "potential_impact": gemini_res.get("potential_impact", ""),
-            "confidence_score": round(float(gemini_res.get("confidence_score", 0.0)), 5),
+            "confidence_score": round(float(gemini_res.get("confidence_score", 0.0)), 5)
+        }
+        
+    except Exception as e:
+        logger.error(f"[RetDec+Gemini] Analysis failed: {str(e)}")
+        return {
+            "gemini_probability": 0.0,
+            "retdec_architecture": {},
+            "retdec_file_format": "",
+            "retdec_imports": {},
+            "retdec_suspicious_calls": {},
+            "suspicious_indicators": [],
+            "behavioral_patterns": [],
+            "potential_impact": "",
+            "confidence_score": 0.0
+        }
+
+async def analyze_executable(file_path: Path, out_dir: Path) -> Dict[str, Any]:
+    """Analyze executable files using parallel EMBER and RetDec+Gemini paths"""
+    try:
+        logger.info(f"Starting parallel analysis at {datetime.now().strftime('%H:%M:%S')}")
+        # Run both analyses in parallel
+        ember_result, retdec_gemini_result = await asyncio.gather(
+            run_ember_analysis(file_path),
+            run_retdec_gemini_analysis(file_path, out_dir)
+        )
+        logger.info(f"Parallel analysis completed at {datetime.now().strftime('%H:%M:%S')}")
+        
+        # Combine results
+        return {
+            **ember_result,
+            **retdec_gemini_result,
             "error": None
         }
         
