@@ -3,7 +3,7 @@ import sys
 from connection import ping_vm, test_connection
 from file_transfer import send_file_to_vm
 
-VM_IP = "192.168.177.128"
+VM_IP = "127.0.0.1"
 PORT = 12345
 
 def print_firewall_help():
