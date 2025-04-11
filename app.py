@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+
 """
-VMware Dynamic Analysis Integration
------------------------------------
+Windows VMware Dynamic Analysis Integration
+------------------------------------------
 This integration allows for automated dynamic analysis of samples in isolated VMware virtual machines.
-It handles VM lifecycle management, sample deployment, execution monitoring, and artifact collection.
+Specifically optimized for Windows VMs for malware analysis.
 """
 
 import os
@@ -21,7 +21,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger('vm-analysis')
+logger = logging.getLogger('win-vm-analysis')
 
 class VMwareController:
     """Controls VMware VMs using vmrun command-line utility"""
@@ -90,7 +90,7 @@ class VMwareController:
         returncode, _, _ = self._run_vmrun("start")
         
         # Wait for VM to fully boot up
-        time.sleep(30)  # Adjust based on VM boot time
+        time.sleep(60)  # Windows may need more time to boot
         return returncode == 0
         
     def stop(self, hard: bool = False) -> bool:
@@ -121,8 +121,34 @@ class VMwareController:
             program_args.append("-interactive")
             
         logger.info(f"Running guest command: {command}")
+        
+        # Use cmd.exe for Windows commands
         returncode, stdout, stderr = self._run_vmrun("runProgramInGuest", *program_args, 
-                                                    "/bin/bash", "-c", command)
+                                                    "cmd.exe", "/c", command)
+        return returncode, stdout + stderr
+    
+    def run_powershell(self, ps_command: str, interactive: bool = False) -> Tuple[int, str]:
+        """
+        Run a PowerShell command inside the guest VM
+        
+        Args:
+            ps_command: PowerShell command to execute
+            interactive: Whether the command is interactive
+            
+        Returns:
+            Tuple of (return_code, command_output)
+        """
+        program_args = ["-gu", self.vm_username, "-gp", self.vm_password]
+        if interactive:
+            program_args.append("-interactive")
+            
+        # Escape quotes for PowerShell
+        ps_command = ps_command.replace('"', '\\"')
+        full_command = f'powershell.exe -ExecutionPolicy Bypass -Command "{ps_command}"'
+        
+        logger.info(f"Running PowerShell command: {ps_command}")
+        returncode, stdout, stderr = self._run_vmrun("runProgramInGuest", *program_args, 
+                                                    "cmd.exe", "/c", full_command)
         return returncode, stdout + stderr
     
     def copy_file_to_guest(self, local_path: str, guest_path: str) -> bool:
@@ -207,8 +233,8 @@ class VMwareController:
         return returncode == 0
 
 
-class DynamicAnalyzer:
-    """Orchestrates dynamic analysis in a VM sandbox"""
+class WindowsDynamicAnalyzer:
+    """Orchestrates dynamic analysis in a Windows VM sandbox"""
     
     def __init__(self, vm_controller: VMwareController, analysis_dir: str):
         """
@@ -223,9 +249,9 @@ class DynamicAnalyzer:
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
         self.current_analysis_id = None
         
-        # Guest paths
-        self.guest_working_dir = "/tmp/analysis"
-        self.guest_tools_dir = "/opt/analysis_tools"
+        # Guest paths (Windows-specific)
+        self.guest_working_dir = "C:\\Analysis"
+        self.guest_tools_dir = "C:\\opt\\analysis_tools"
         
         # Host monitoring tools
         self.monitoring_processes = []
@@ -255,6 +281,7 @@ class DynamicAnalyzer:
         (analysis_path / "filesystem").mkdir()
         (analysis_path / "screenshots").mkdir()
         (analysis_path / "logs").mkdir()
+        (analysis_path / "registry").mkdir()
         
         return str(analysis_path)
         
@@ -266,19 +293,23 @@ class DynamicAnalyzer:
             True if successful
         """
         # Ensure working directory exists
-        self.vm.run_command(f"mkdir -p {self.guest_working_dir}")
+        self.vm.run_command(f"mkdir {self.guest_working_dir}")
         
-        # Copy monitoring tools to guest if needed
-        # (In a real implementation, you'd deploy your monitoring tools here)
+        # Disable Windows Defender 
+        self.vm.run_powershell("Set-MpPreference -DisableRealtimeMonitoring $true")
         
-        # Disable Windows Defender (if Windows guest)
-        # self.vm.run_command("powershell -Command Set-MpPreference -DisableRealtimeMonitoring $true")
+        # Disable Windows Update
+        self.vm.run_powershell("Stop-Service wuauserv")
+        self.vm.run_powershell("Set-Service wuauserv -StartupType Disabled")
+        
+        # Disable Windows Firewall
+        self.vm.run_powershell("Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False")
         
         return True
         
     def _start_monitoring(self, analysis_dir: str) -> bool:
         """
-        Start monitoring tools inside and outside the VM
+        Start monitoring tools inside the VM
         
         Args:
             analysis_dir: Path to analysis directory
@@ -286,26 +317,30 @@ class DynamicAnalyzer:
         Returns:
             True if successful
         """
-        # Start network capture (example using tcpdump inside VM)
-        self.vm.run_command(
-            f"tcpdump -i any -w {self.guest_working_dir}/network.pcap &>/dev/null &"
+        # Start network capture using PowerShell and netsh
+        self.vm.run_powershell(
+            f"netsh trace start capture=yes tracefile={self.guest_working_dir}\\network.etl"
         )
         
-        # Start process monitoring (example using procmon or similar tool)
+        # Start Procmon
+        procmon_path = f"{self.guest_tools_dir}\\Procmon.exe"
+        procmon_log = f"{self.guest_working_dir}\\procmon.pml"
         self.vm.run_command(
-            f"{self.guest_tools_dir}/procmon -o {self.guest_working_dir}/procmon.log &"
+            f"start /B {procmon_path} /Quiet /Minimized /BackingFile {procmon_log}"
         )
         
-        # Start memory dumping at intervals (example)
-        # self.vm.run_command(
-        #     f"bash -c 'while true; do {self.guest_tools_dir}/memdump > "
-        #     f"{self.guest_working_dir}/memdump_$(date +%s).raw; sleep 60; done &'"
-        # ) 
+        # Start registry monitoring
+        self.vm.run_powershell(
+            f"reg export HKLM {self.guest_working_dir}\\reg_before_HKLM.reg /y"
+        )
+        self.vm.run_powershell(
+            f"reg export HKCU {self.guest_working_dir}\\reg_before_HKCU.reg /y"
+        )
         
-        # Start screenshots at intervals
-        screenshot_dir = f"{analysis_dir}/screenshots"
-        # Use a separate thread to take screenshots every few seconds
-        # (simplified example - real implementation would use threading)
+        # Capture pre-run memory snapshot
+        self.vm.run_powershell(
+            f"tasklist /v > {self.guest_working_dir}\\memory_before.txt"
+        )
         
         logger.info("Started all monitoring tools")
         return True
@@ -323,17 +358,14 @@ class DynamicAnalyzer:
         """
         logger.info(f"Executing sample: {guest_sample_path} {arguments}")
         
-        # Make sure sample is executable
-        self.vm.run_command(f"chmod +x {guest_sample_path}")
-        
         # Take pre-execution screenshot
         self.vm.capture_screenshot(f"{self.analysis_dir}/{self.current_analysis_id}/screenshots/pre_exec.png")
         
-        # Execute the sample (non-blocking to allow monitoring to continue)
-        command = f"{guest_sample_path} {arguments} &"
+        # Execute the sample
+        command = f"start /B {guest_sample_path} {arguments}"
         returncode, output = self.vm.run_command(command)
         
-        # Give the sample time to start and perform actions
+        # Give the sample time to execute and perform actions
         time.sleep(120)  # Adjust based on expected sample runtime
         
         # Take post-execution screenshot
@@ -343,16 +375,25 @@ class DynamicAnalyzer:
         
     def _stop_monitoring(self) -> None:
         """Stop all monitoring processes"""
-        # Stop tcpdump
-        self.vm.run_command("pkill tcpdump")
+        # Stop network tracing
+        self.vm.run_powershell("netsh trace stop")
         
-        # Stop process monitor
-        self.vm.run_command("pkill -f procmon")
+        # Stop Procmon
+        self.vm.run_command(f"{self.guest_tools_dir}\\Procmon.exe /Terminate")
         
-        # Stop any other monitoring processes
-        for proc_pattern in ["memdump"]:
-            self.vm.run_command(f"pkill -f {proc_pattern}")
-            
+        # Take post-run registry snapshot
+        self.vm.run_powershell(
+            f"reg export HKLM {self.guest_working_dir}\\reg_after_HKLM.reg /y"
+        )
+        self.vm.run_powershell(
+            f"reg export HKCU {self.guest_working_dir}\\reg_after_HKCU.reg /y"
+        )
+        
+        # Capture post-run memory snapshot
+        self.vm.run_powershell(
+            f"tasklist /v > {self.guest_working_dir}\\memory_after.txt"
+        )
+        
         logger.info("Stopped all monitoring tools")
             
     def _collect_artifacts(self, analysis_dir: str) -> bool:
@@ -367,40 +408,75 @@ class DynamicAnalyzer:
         """
         # Collect network capture
         self.vm.copy_file_from_guest(
-            f"{self.guest_working_dir}/network.pcap",
-            f"{analysis_dir}/network/capture.pcap"
+            f"{self.guest_working_dir}\\network.etl",
+            f"{analysis_dir}/network/capture.etl"
         )
         
-        # Collect process monitoring logs
+        # Convert ETL to PCAP if available in guest
+        self.vm.run_powershell(
+            f"if (Test-Path 'C:\\Program Files\\Wireshark\\etl2pcapng.exe') {{ " +
+            f"& 'C:\\Program Files\\Wireshark\\etl2pcapng.exe' '{self.guest_working_dir}\\network.etl' " +
+            f"'{self.guest_working_dir}\\network.pcapng' }}"
+        )
+        
+        # Copy PCAP if it was created
         self.vm.copy_file_from_guest(
-            f"{self.guest_working_dir}/procmon.log",
-            f"{analysis_dir}/logs/procmon.log"
+            f"{self.guest_working_dir}\\network.pcapng",
+            f"{analysis_dir}/network/capture.pcapng"
         )
         
-        # Collect memory dumps
-        self.vm.run_command(
-            f"find {self.guest_working_dir} -name 'memdump_*.raw' -exec cp {{}} {self.guest_working_dir}/to_extract/ \\;"
-        )
-        # Then copy directory contents...
-        
-        # Collect modified files
-        # (In a real implementation you'd determine which files were modified)
-        
-        # Collect system logs
-        self.vm.run_command(
-            f"cp /var/log/syslog {self.guest_working_dir}/syslog.txt"
-        )
+        # Collect Procmon logs
         self.vm.copy_file_from_guest(
-            f"{self.guest_working_dir}/syslog.txt",
-            f"{analysis_dir}/logs/syslog.txt"
+            f"{self.guest_working_dir}\\procmon.pml",
+            f"{analysis_dir}/logs/procmon.pml"
         )
+        
+        # Collect registry snapshots
+        for reg_file in ["reg_before_HKLM.reg", "reg_before_HKCU.reg", 
+                          "reg_after_HKLM.reg", "reg_after_HKCU.reg"]:
+            self.vm.copy_file_from_guest(
+                f"{self.guest_working_dir}\\{reg_file}",
+                f"{analysis_dir}/registry/{reg_file}"
+            )
+        
+        # Collect memory info
+        for mem_file in ["memory_before.txt", "memory_after.txt"]:
+            self.vm.copy_file_from_guest(
+                f"{self.guest_working_dir}\\{mem_file}",
+                f"{analysis_dir}/memory/{mem_file}"
+            )
+        
+        # Collect Windows event logs
+        self.vm.run_powershell(
+            f"wevtutil epl Application {self.guest_working_dir}\\Application.evtx"
+        )
+        self.vm.run_powershell(
+            f"wevtutil epl Security {self.guest_working_dir}\\Security.evtx"
+        )
+        self.vm.run_powershell(
+            f"wevtutil epl System {self.guest_working_dir}\\System.evtx"
+        )
+        
+        # Copy event logs
+        for evt_file in ["Application.evtx", "Security.evtx", "System.evtx"]:
+            self.vm.copy_file_from_guest(
+                f"{self.guest_working_dir}\\{evt_file}",
+                f"{analysis_dir}/logs/{evt_file}"
+            )
         
         logger.info(f"Collected all artifacts to {analysis_dir}")
         return True
     
     def _cleanup_guest(self) -> None:
         """Clean up guest VM after analysis"""
-        self.vm.run_command(f"rm -rf {self.guest_working_dir}/*")
+        self.vm.run_command(f"rmdir /S /Q {self.guest_working_dir}")
+        
+        # Re-enable Windows Defender (optional)
+        self.vm.run_powershell("Set-MpPreference -DisableRealtimeMonitoring $false")
+        
+        # Re-enable Windows Firewall (optional)
+        self.vm.run_powershell("Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True")
+        
         logger.info("Cleaned up guest environment")
         
     def analyze(self, sample_path: str, arguments: str = "") -> str:
@@ -426,8 +502,12 @@ class DynamicAnalyzer:
             self._prepare_guest_environment()
             
             # Copy sample to guest
-            guest_sample_path = f"{self.guest_working_dir}/{sample_name}"
+            guest_sample_path = f"{self.guest_working_dir}\\{sample_name}"
             self.vm.copy_file_to_guest(sample_path, guest_sample_path)
+
+            logger.info(f"Attempting to copy sample to {guest_sample_path}")
+            result = self.vm.copy_file_to_guest(sample_path, guest_sample_path)
+            logger.info(f"Copy operation result: {result}")
             
             # Start monitoring
             self._start_monitoring(analysis_dir)
@@ -465,11 +545,10 @@ class DynamicAnalyzer:
             "timestamp": datetime.now().isoformat(),
             "sample": os.path.basename(analysis_dir),
             "summary": {
-                "network_connections": self._analyze_network_traffic(f"{analysis_dir}/network/capture.pcap"),
-                "created_files": self._find_created_files(f"{analysis_dir}/filesystem"),
-                "modified_files": self._find_modified_files(f"{analysis_dir}/filesystem"),
-                "registry_changes": self._find_registry_changes(f"{analysis_dir}/logs/procmon.log"),
-                "processes": self._analyze_process_activity(f"{analysis_dir}/logs/procmon.log"),
+                "network_connections": self._analyze_network_traffic(f"{analysis_dir}/network"),
+                "file_system_changes": self._analyze_filesystem_changes(f"{analysis_dir}/logs/procmon.pml"),
+                "registry_changes": self._analyze_registry_changes(f"{analysis_dir}/registry"),
+                "process_activity": self._analyze_process_activity(f"{analysis_dir}/memory"),
                 "screenshots": os.listdir(f"{analysis_dir}/screenshots"),
             },
             "conclusion": self._draw_conclusions(analysis_dir)
@@ -484,45 +563,63 @@ class DynamicAnalyzer:
         
         logger.info(f"Generated analysis report: {analysis_dir}/report.json")
     
-    # Simplified implementations of analysis functions
-    def _analyze_network_traffic(self, pcap_path: str) -> List[Dict[str, Any]]:
-        """Analyze network traffic from pcap file"""
-        # In a real implementation, you'd use a library like pyshark or scapy
-        return [{"dst_ip": "8.8.8.8", "dst_port": 53, "protocol": "DNS"}]
+    # Analysis functions - simplified implementations
+    def _analyze_network_traffic(self, network_dir: str) -> List[Dict[str, Any]]:
+        """Analyze network traffic from capture files"""
+        # This is a simplified placeholder
+        # In a real implementation, you'd use a library to parse pcap/etl files
+        return [{"dst_ip": "1.2.3.4", "dst_port": 80, "protocol": "HTTP"}]
     
-    def _find_created_files(self, filesystem_dir: str) -> List[str]:
-        """Find files created by the sample"""
-        # Simplified implementation
-        return ["C:\\Users\\analyst\\AppData\\Local\\Temp\\malware_dropper.exe"]
+    def _analyze_filesystem_changes(self, procmon_log: str) -> Dict[str, List[str]]:
+        """Analyze filesystem changes from procmon log"""
+        # This is a simplified placeholder
+        # In a real implementation, you'd parse the PML file
+        return {
+            "created": ["C:\\Users\\analyst\\AppData\\Local\\Temp\\malware_dropper.exe"],
+            "modified": ["C:\\Windows\\System32\\hosts"],
+            "deleted": []
+        }
     
-    def _find_modified_files(self, filesystem_dir: str) -> List[str]:
-        """Find files modified by the sample"""
-        # Simplified implementation
-        return ["C:\\Windows\\System32\\hosts"]
+    def _analyze_registry_changes(self, registry_dir: str) -> List[Dict[str, Any]]:
+        """Compare before/after registry exports to find changes"""
+        # This is a simplified placeholder
+        # In a real implementation, you'd parse and compare the registry files
+        return [
+            {
+                "key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "value": "Malware",
+                "data": "C:\\malware.exe",
+                "change_type": "added"
+            }
+        ]
     
-    def _find_registry_changes(self, procmon_log: str) -> List[Dict[str, Any]]:
-        """Find registry changes made by the sample"""
-        # Simplified implementation
-        return [{"key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", 
-                "value": "Malware", "data": "C:\\malware.exe"}]
-    
-    def _analyze_process_activity(self, procmon_log: str) -> List[Dict[str, Any]]:
-        """Analyze process activity"""
-        # Simplified implementation
-        return [{"process": "malware.exe", "pid": 1234, "parent_pid": 4567}]
+    def _analyze_process_activity(self, memory_dir: str) -> List[Dict[str, Any]]:
+        """Analyze process activity from memory snapshots"""
+        # This is a simplified placeholder
+        # In a real implementation, you'd parse and compare the process lists
+        return [
+            {
+                "process": "malware.exe",
+                "pid": 1234,
+                "parent_process": "explorer.exe",
+                "parent_pid": 4567
+            }
+        ]
     
     def _draw_conclusions(self, analysis_dir: str) -> Dict[str, Any]:
-        """Draw conclusions from analysis"""
-        # Simplified implementation
+        """Draw conclusions from analysis artifacts"""
+        # This is a simplified placeholder
+        # In a real implementation, you'd have logic to classify behavior
         return {
             "threat_level": "high",
             "classification": "trojan",
-            "behavior": ["persistence", "data_exfiltration"]
+            "behavior": ["persistence", "data_exfiltration"],
+            "ioc": ["1.2.3.4:80", "C:\\malware.exe"]
         }
     
     def _generate_html_report(self, report_data: Dict[str, Any], output_path: str) -> None:
         """Generate HTML report from report data"""
-        # Simplified implementation - in a real system you'd use a template engine
+        # Simplified HTML report generator
         html = f"""
         <html>
         <head>
@@ -532,14 +629,36 @@ class DynamicAnalyzer:
                 h1 {{ color: #2c3e50; }}
                 .section {{ margin-bottom: 20px; }}
                 .evidence {{ background-color: #f8f9fa; padding: 10px; border-radius: 5px; }}
+                .high {{ color: red; font-weight: bold; }}
+                .medium {{ color: orange; font-weight: bold; }}
+                .low {{ color: green; }}
+                table {{ border-collapse: collapse; width: 100%; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
             </style>
         </head>
         <body>
             <h1>Analysis Report: {report_data['sample']}</h1>
             <div class="section">
                 <h2>Summary</h2>
-                <p>Threat Level: {report_data['conclusion']['threat_level']}</p>
+                <p>Threat Level: <span class="{report_data['conclusion']['threat_level']}">
+                    {report_data['conclusion']['threat_level'].upper()}</span></p>
                 <p>Classification: {report_data['conclusion']['classification']}</p>
+                <p>Behaviors: {', '.join(report_data['conclusion']['behavior'])}</p>
+            </div>
+            <div class="section">
+                <h2>Screenshots</h2>
+                <p>See screenshots directory for execution evidence.</p>
+            </div>
+            <div class="section">
+                <h2>Network Activity</h2>
+                <table>
+                    <tr><th>Destination IP</th><th>Port</th><th>Protocol</th></tr>
+                    {''.join(
+                        f"<tr><td>{conn['dst_ip']}</td><td>{conn['dst_port']}</td><td>{conn['protocol']}</td></tr>"
+                        for conn in report_data['summary']['network_connections']
+                    )}
+                </table>
             </div>
             <!-- More sections would go here -->
         </body>
@@ -550,11 +669,40 @@ class DynamicAnalyzer:
             f.write(html)
 
 
+def find_vmrun_path():
+    """Find the vmrun executable path based on OS"""
+    # Common VMware paths
+    if os.name == 'nt':  # Windows
+        potential_paths = [
+            r"C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe",
+            r"C:\Program Files\VMware\VMware Workstation\vmrun.exe",
+            r"C:\Program Files (x86)\VMware\VMware Player\vmrun.exe",
+            r"C:\Program Files\VMware\VMware Player\vmrun.exe"
+        ]
+    else:  # Linux/Mac
+        potential_paths = [
+            "/usr/bin/vmrun",
+            "/usr/local/bin/vmrun",
+            "/Applications/VMware Fusion.app/Contents/Library/vmrun"
+        ]
+    
+    for path in potential_paths:
+        if os.path.exists(path):
+            return path
+    
+    return None
+
+
 def main():
-    """Main entry point for the VM analysis tool"""
-    parser = argparse.ArgumentParser(description='VMware Dynamic Analysis Tool')
+    """Main entry point for the Windows VM analysis tool"""
+    parser = argparse.ArgumentParser(description='Windows VMware Dynamic Analysis Tool')
     parser.add_argument('sample', help='Path to sample file to analyze')
-    parser.add_argument('--vmrun', default='/usr/bin/vmrun', help='Path to vmrun executable')
+    
+    # Try to auto-detect vmrun path
+    default_vmrun = find_vmrun_path()
+    parser.add_argument('--vmrun', default=default_vmrun, 
+                       help='Path to vmrun executable')
+    
     parser.add_argument('--vm', required=True, help='Path to .vmx file for analysis VM')
     parser.add_argument('--snapshot', default='Clean', help='VM snapshot name to revert to')
     parser.add_argument('--output', default='./analysis_results', help='Output directory for results')
@@ -562,10 +710,19 @@ def main():
     
     args = parser.parse_args()
     
+    # Validate vmrun path
+    if not args.vmrun:
+        print("ERROR: Could not find vmrun executable. Please specify with --vmrun")
+        return 1
+    
+    if not os.path.exists(args.vmrun):
+        print(f"ERROR: vmrun not found at {args.vmrun}")
+        return 1
+    
     try:
         # Initialize controller and analyzer
         vm_controller = VMwareController(args.vmrun, args.vm, args.snapshot)
-        analyzer = DynamicAnalyzer(vm_controller, args.output)
+        analyzer = WindowsDynamicAnalyzer(vm_controller, args.output)
         
         # Run analysis
         results_dir = analyzer.analyze(args.sample, args.args)
