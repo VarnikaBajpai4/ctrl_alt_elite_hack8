@@ -1,29 +1,59 @@
+
+
 import socket
 import os
 import time
 import base64
 import platform
 import subprocess
+import argparse
+import sys
 
-# Guest VM IP address
-VM_IP = "192.168.177.128"
-PORT = 12345
-
-def check_vm_connectivity():
+def ping_vm(ip_address):
     """Check if the VM is reachable via ping"""
     param = '-n' if platform.system().lower() == 'windows' else '-c'
-    command = ['ping', param, '1', VM_IP]
+    command = ['ping', param, '1', ip_address]
     
     try:
-        subprocess.check_output(command)
-        print(f"VM is reachable at {VM_IP}")
+        subprocess.check_output(command, stderr=subprocess.STDOUT)
+        print(f"✓ VM is reachable at {ip_address}")
         return True
     except subprocess.CalledProcessError:
-        print(f"Cannot reach VM at {VM_IP}. Please check VM connectivity.")
+        print(f"✗ Cannot reach VM at {ip_address}. Please check VM connectivity.")
         return False
 
-def send_file_to_vm(file_path):
-    """Send a file to the VM and request execution"""
+def test_connection(ip_address, port):
+    """Test if the listener is running on the VM"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            print(f"Testing connection to {ip_address}:{port}...")
+            s.connect((ip_address, port))
+            
+            # Send ping message
+            s.sendall("PING".encode() + "END_OF_TRANSMISSION".encode())
+            
+            # Wait for response
+            response = s.recv(1024).decode()
+            if response.startswith("PONG"):
+                print(f"✓ Connection successful! Listener is active.")
+                return True
+            else:
+                print(f"✗ Unexpected response from listener: {response}")
+                return False
+                
+    except ConnectionRefusedError:
+        print("✗ Connection refused. Make sure the listener is running on the guest VM.")
+        return False
+    except socket.timeout:
+        print("✗ Connection timed out. Check VM connectivity and firewall settings.")
+        return False
+    except Exception as e:
+        print(f"✗ Error: {str(e)}")
+        return False
+
+def send_file_to_vm(ip_address, port, file_path, execute=False):
+    """Send a file to the VM and optionally request execution"""
     # Check if file exists
     if not os.path.isfile(file_path):
         print(f"Error: File '{file_path}' not found.")
@@ -42,177 +72,112 @@ def send_file_to_vm(file_path):
         
         # Connect to the VM
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(10)
-            print(f"Connecting to {VM_IP}:{PORT}...")
-            s.connect((VM_IP, PORT))
+            s.settimeout(30)  # Longer timeout for large files
+            print(f"Connecting to {ip_address}:{port}...")
+            s.connect((ip_address, port))
             
             # Create a protocol for our file transfer
             # Format: "FILE:<filename>:<base64_content>"
             file_message = f"FILE:{file_name}:{encoded_content.decode()}"
             
-            # Send the data
-            print(f"Sending file '{file_name}' ({len(file_content)} bytes)...")
-            s.sendall(file_message.encode())
+            # Send the data with an end marker
+            print(f"Sending file '{file_name}' ({len(file_content):,} bytes)...")
+            s.sendall((file_message + "END_OF_TRANSMISSION").encode())
             
             # Get response
             response = s.recv(1024).decode()
-            print(f"Response from VM: {response}")
-            
-            # Request execution if transfer was successful
-            if "File received" in response:
-                print("Requesting file execution...")
-                s.sendall(f"EXECUTE:{file_name}".encode())
-                exec_response = s.recv(1024).decode()
-                print(f"Execution response: {exec_response}")
+            if response.startswith("SUCCESS:"):
+                print(f"✓ {response[8:]}")  # Remove "SUCCESS:" prefix
                 
-            return "File received" in response
+                # Request execution if specified
+                if execute:
+                    print("Requesting file execution...")
+                    time.sleep(0.5)  # Short delay before sending the next command
+                    
+                    # Create a new connection for execution
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as exec_socket:
+                        exec_socket.settimeout(10)
+                        exec_socket.connect((ip_address, port))
+                        exec_socket.sendall(f"EXECUTE:{file_name}END_OF_TRANSMISSION".encode())
+                        exec_response = exec_socket.recv(1024).decode()
+                        
+                        if exec_response.startswith("SUCCESS:"):
+                            print(f"✓ {exec_response[8:]}")  # Remove "SUCCESS:" prefix
+                            return True
+                        else:
+                            print(f"✗ Execution failed: {exec_response}")
+                            return False
+                
+                return True
+            else:
+                print(f"✗ File transfer failed: {response}")
+                return False
             
     except ConnectionRefusedError:
-        print("Connection refused. Make sure the listener is running on the guest VM and the firewall allows the connection.")
+        print("✗ Connection refused. Make sure the listener is running on the guest VM.")
         return False
     except socket.timeout:
-        print("Connection timed out. Check VM connectivity and firewall settings.")
+        print("✗ Connection timed out. Check VM connectivity and firewall settings.")
         return False
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"✗ Error: {str(e)}")
         return False
+
+def print_firewall_help():
+    """Print instructions for setting up the firewall in the guest VM"""
+    print("\n=== Firewall Configuration Instructions ===")
+    print("In your Windows 11 guest VM, run PowerShell as Administrator and execute:")
+    print("\n# Create a new inbound rule to allow the listener port")
+    print("New-NetFirewallRule -DisplayName \"VM File Transfer\" -Direction Inbound -Protocol TCP -LocalPort 12345 -Action Allow")
+    print("\n# Or to temporarily disable the firewall for testing (not recommended for regular use)")
+    print("Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False")
+    print("\n# Remember to turn it back on when done")
+    print("Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True")
 
 def main():
-    print("===== VMware Guest File Transfer and Execution Tool =====")
+    parser = argparse.ArgumentParser(description="VMware File Transfer Utility")
+    parser.add_argument("--ip", default="192.168.177.128", help="Guest VM IP address")
+    parser.add_argument("--port", type=int, default=12345, help="Port number")
+    parser.add_argument("--file", help="Path to file for transfer")
+    parser.add_argument("--execute", action="store_true", help="Execute file after transfer")
+    parser.add_argument("--test", action="store_true", help="Test connectivity only")
     
-    # Check VM connectivity
-    if not check_vm_connectivity():
-        print("\nFirewall troubleshooting instructions:")
-        print("1. In the guest VM, open Windows Defender Firewall with Advanced Security")
-        print("2. Select 'Inbound Rules' from the left panel")
-        print("3. Click 'New Rule...' from the right panel")
-        print("4. Choose 'Port' and click Next")
-        print("5. Select 'TCP' and specify port '12345', then click Next")
-        print("6. Select 'Allow the connection' and click Next")
-        print("7. Check all profiles (Domain, Private, Public) and click Next")
-        print("8. Give the rule a name (e.g., 'VM File Transfer') and click Finish")
-        print("\nAlternatively, you can temporarily disable the firewall for testing:")
-        print("1. Open Command Prompt as Administrator in the guest VM")
-        print("2. Run: netsh advfirewall set allprofiles state off")
-        print("3. Remember to turn it back on when done: netsh advfirewall set allprofiles state on")
+    args = parser.parse_args()
+    
+    print("===== VMware Host-to-Guest File Transfer Utility =====")
+    
+    # If only testing connectivity
+    if args.test:
+        if ping_vm(args.ip):
+            test_connection(args.ip, args.port)
         return
     
-    # Get file path from user
-    file_path = input("\nEnter the path of the file you want to transfer and execute: ")
-    file_path = file_path.strip('"')  # Remove quotes if user included them
+    # Require file argument if not just testing
+    if not args.file:
+        print("Error: Please specify a file to transfer with --file")
+        parser.print_help()
+        return
     
-    print("\nBefore sending the file, you need to run the listener script on the guest VM.")
-    print("Copy and run this Python script on the Windows 11 guest VM:")
-    print("""
-import socket
-import base64
-import os
-import subprocess
-import sys
-
-HOST = '0.0.0.0'  # Listen on all interfaces
-PORT = 12345      # Port to listen on
-
-def save_and_execute_file(file_name, encoded_content):
-    try:
-        # Decode the base64 content
-        file_content = base64.b64decode(encoded_content)
-        
-        # Save the file to the guest's temp directory
-        save_path = os.path.join(os.environ['TEMP'], file_name)
-        with open(save_path, 'wb') as f:
-            f.write(file_content)
-        
-        print(f"File saved to: {save_path}")
-        return save_path
-    except Exception as e:
-        print(f"Error saving file: {str(e)}")
-        return None
-
-def execute_file(file_path):
-    try:
-        # Get file extension
-        _, ext = os.path.splitext(file_path)
-        
-        if ext.lower() in ['.exe', '.bat', '.cmd']:
-            # Run executable files
-            process = subprocess.Popen(file_path, shell=True)
-            return f"Executing {os.path.basename(file_path)} with PID: {process.pid}"
-        elif ext.lower() == '.py':
-            # Run Python scripts
-            process = subprocess.Popen([sys.executable, file_path], shell=True)
-            return f"Executing Python script with PID: {process.pid}"
-        elif ext.lower() in ['.ps1']:
-            # Run PowerShell scripts
-            process = subprocess.Popen(['powershell', '-ExecutionPolicy', 'Bypass', '-File', file_path], shell=True)
-            return f"Executing PowerShell script with PID: {process.pid}"
-        else:
-            # For other files, open with default application
-            os.startfile(file_path)
-            return f"Opening {os.path.basename(file_path)} with default application"
-    except Exception as e:
-        return f"Error executing file: {str(e)}"
-
-# Store received files for later execution
-received_files = {}
-
-# Start listening
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    s.bind((HOST, PORT))
-    s.listen()
-    print(f"Listening on port {PORT}...")
+    # Check VM connectivity
+    if not ping_vm(args.ip):
+        print_firewall_help()
+        return
     
-    while True:
-        conn, addr = s.accept()
-        with conn:
-            print(f"Connected by {addr}")
-            data = conn.recv(1024*1024)  # Increase buffer size for larger files
-            
-            if not data:
-                break
-                
-            message = data.decode()
-            
-            # Handle file transfer
-            if message.startswith("FILE:"):
-                try:
-                    # Parse the message
-                    _, file_name, encoded_content = message.split(":", 2)
-                    
-                    # Save the file
-                    save_path = save_and_execute_file(file_name, encoded_content)
-                    if save_path:
-                        received_files[file_name] = save_path
-                        response = f"File received and saved: {file_name}"
-                    else:
-                        response = "Error saving file"
-                    
-                except Exception as e:
-                    response = f"Error processing file: {str(e)}"
-                
-                conn.sendall(response.encode())
-            
-            # Handle execution request
-            elif message.startswith("EXECUTE:"):
-                _, file_name = message.split(":", 1)
-                
-                if file_name in received_files:
-                    result = execute_file(received_files[file_name])
-                    conn.sendall(f"Execution initiated: {result}".encode())
-                else:
-                    conn.sendall(f"File not found: {file_name}".encode())
-            
-            # Handle regular messages
-            else:
-                print(f"Received: {message}")
-                response = "Message received by guest VM"
-                conn.sendall(response.encode())
-    """)
+    # Test if listener is active
+    if not test_connection(args.ip, args.port):
+        print("\nMake sure the listener script is running on the guest VM.")
+        print_firewall_help()
+        return
     
-    input("\nPress Enter when the listener is running on the guest VM...")
+    # Clean up file path
+    file_path = args.file.strip('"')  # Remove quotes if user included them
     
-    # Send and execute the file
-    send_file_to_vm(file_path)
+    # Send and optionally execute the file
+    send_file_to_vm(args.ip, args.port, file_path, args.execute)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+        sys.exit(0)
