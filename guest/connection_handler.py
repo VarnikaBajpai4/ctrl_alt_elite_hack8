@@ -37,7 +37,6 @@ def handle_client(conn, addr, save_dir):
                 save_path = save_file(file_name, encoded_content, save_dir)
                 if save_path:
                     response = f"SUCCESS:File received and saved: {file_name}"
-                    conn.file_path = save_path
                 else:
                     response = "ERROR:Failed to save file"
                 

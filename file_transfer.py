@@ -27,6 +27,9 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
             s.sendall((file_message + "END_OF_TRANSMISSION").encode())
             
             response = s.recv(1024).decode()
+            print("1")
+            print(response)
+            print("2/n")
             if response.startswith("SUCCESS:"):
                 print(f"✓ {response[8:]}")
                 
