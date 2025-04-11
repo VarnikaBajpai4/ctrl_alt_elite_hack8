@@ -78,11 +78,25 @@ class AnalysisResult(BaseModel):
         }
 
 def detect_file_type(file_path: Path) -> str:
-    """Detect file type using python-magic"""
+    """Detect file type using python-magic, with fallback for .exe detection on macOS"""
     mime = magic.Magic(mime=True)
     file_type = mime.from_file(str(file_path))
-    
-    # Map MIME types to our categories
+
+    # 🔍 Debug print for MIME type
+    print(f"[DEBUG] MIME Type detected by libmagic: {file_type}")
+
+    # macOS/libmagic might mislabel .exe files as generic binary
+    if file_type in ['application/octet-stream', 'application/x-mach-binary', 'application/x-binary', 'application/x-msdownload', 'application/vnd.microsoft.portable-executable']:
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(2)
+                # Check for 'MZ' header used in PE files (Windows executables)
+                if header == b'MZ':
+                    print("[DEBUG] Detected 'MZ' header — classifying as executable")
+                    return 'executable'
+        except Exception as e:
+            print(f"[DEBUG] Error reading file header: {e}")
+
     if file_type == 'application/pdf':
         return 'pdf'
     elif file_type in ['application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -93,9 +107,7 @@ def detect_file_type(file_path: Path) -> str:
                       'application/vnd.ms-excel',
                       'application/vnd.ms-excel.sheet.macroEnabled.12']:
         return 'doc'  # Treat Excel files as documents
-    elif file_type in ['application/x-msdownload',
-                      'application/x-dosexec',
-                      'application/x-ms-dos-executable',
+    elif file_type in ['application/x-dosexec',
                       'application/x-executable',
                       'application/x-sharedlib']:
         return 'executable'
