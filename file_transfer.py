@@ -32,21 +32,37 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
                 
                 if execute:
                     print("Requesting file execution...")
-                    time.sleep(0.5)
+                    time.sleep(1.0)  # Increased delay for local execution
                     
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as exec_socket:
-                        exec_socket.settimeout(10)
-                        exec_socket.connect((ip_address, port))
-                        # Keep the end transmission marker separate
-                        exec_socket.sendall(f"EXECUTE:{file_name}".encode() + "END_OF_TRANSMISSION".encode())
-                        exec_response = exec_socket.recv(1024).decode()
-                        
-                        if exec_response.startswith("SUCCESS:"):
-                            print(f"✓ {exec_response[8:]}")
-                            return True
-                        else:
-                            print(f"✗ Execution failed: {exec_response}")
-                            return False
+                    try:
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as exec_socket:
+                            exec_socket.settimeout(15)  # Increased timeout
+                            exec_socket.connect((ip_address, port))
+                            
+                            # Simplified message format
+                            exec_command = f"EXECUTE:{file_name}END_OF_TRANSMISSION"
+                            exec_socket.sendall(exec_command.encode())
+                            
+                            # More robust response handling
+                            try:
+                                exec_response = exec_socket.recv(1024).decode().strip()
+                                if not exec_response:
+                                    print("✓ Execution requested (no detailed response)")
+                                    return True
+                                elif exec_response.startswith("SUCCESS:"):
+                                    print(f"✓ {exec_response[8:]}")
+                                    return True
+                                else:
+                                    print(f"✗ Execution response: {exec_response}")
+                                    return False
+                            except socket.timeout:
+                                # If we time out waiting for response, assume it's running
+                                print("✓ Execution requested (response timed out)")
+                                return True
+                    except Exception as e:
+                        print(f"Execution request error: {str(e)}")
+                        print("The file was transferred but may not have executed.")
+                        return False
                 
                 return True
             else:

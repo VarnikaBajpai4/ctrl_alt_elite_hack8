@@ -3,7 +3,7 @@ import os
 import threading
 from connection_handler import handle_client
   
-HOST = '0.0.0.0'
+HOST = '0.0.0.0'  # Listen on all interfaces
 PORT = 12345
 SAVE_DIR = os.path.join(os.environ['USERPROFILE'], 'Downloads', 'VMTransfers')
 
@@ -14,7 +14,13 @@ def main():
     print(f"Saving files to: {SAVE_DIR}")
     
     hostname = socket.gethostname()
-    ip_address = socket.gethostbyname(hostname)
+    try:
+        ip_address = socket.gethostbyname(hostname)
+        print(f"Local IP address: {ip_address}")
+    except:
+        print("Could not determine IP address")
+    
+    print(f"Loopback address: 127.0.0.1")
     
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -22,11 +28,12 @@ def main():
         try:
             s.bind((HOST, PORT))
             s.listen(5)
-            print(f"Listening on {ip_address}:{PORT}...")
+            print(f"Listening on {HOST}:{PORT}...")
             
             while True:
                 try:
                     conn, addr = s.accept()
+                    print(f"New connection from: {addr}")
                     client_thread = threading.Thread(target=handle_client, args=(conn, addr, SAVE_DIR))
                     client_thread.daemon = True
                     client_thread.start()
