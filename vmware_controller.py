@@ -42,13 +42,14 @@ class VMwareController:
             
         logger.info(f"Initialized VMware controller for VM: {vm_path}")
     
-    def _run_vmrun(self, command: str, *args) -> Tuple[int, str, str]:
+    def _run_vmrun(self, command: str, *args, timeout=300) -> Tuple[int, str, str]:
         """
         Run vmrun with the given command and arguments
         
         Args:
             command: VMware command to run
             args: Additional arguments for the command
+            timeout: Maximum time to wait for command completion (seconds)
             
         Returns:
             Tuple of (return_code, stdout, stderr)
@@ -56,49 +57,111 @@ class VMwareController:
         cmd = [self.vmrun_path, "-T", "ws", command, self.vm_path, *args]
         logger.debug(f"Executing VMware command: {' '.join(cmd)}")
         
-        process = subprocess.Popen(
-            cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
-        stdout, stderr = process.communicate()
-        
-        # More detailed logging of command results
-        if process.returncode == 0:
-            logger.debug(f"VMware command successful: {command}")
-            if stdout.strip():
-                logger.debug(f"Command output: {stdout.strip()}")
-        else:
-            logger.warning(f"VMware command failed: {command}")
-            logger.warning(f"Return code: {process.returncode}")
-            logger.warning(f"Error output: {stderr.strip()}")
-            if stdout.strip():
-                logger.warning(f"Standard output: {stdout.strip()}")
-        
-        return process.returncode, stdout, stderr
+        try:
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            stdout, stderr = process.communicate(timeout=timeout)
+            
+            # More detailed logging of command results
+            if process.returncode == 0:
+                logger.debug(f"VMware command successful: {command}")
+                if stdout.strip():
+                    logger.debug(f"Command output: {stdout.strip()}")
+            else:
+                logger.warning(f"VMware command failed: {command}")
+                logger.warning(f"Return code: {process.returncode}")
+                logger.warning(f"Error output: {stderr.strip()}")
+                if stdout.strip():
+                    logger.warning(f"Standard output: {stdout.strip()}")
+            
+            return process.returncode, stdout, stderr
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"VMware command timed out after {timeout} seconds: {command}")
+            try:
+                process.kill()
+            except:
+                pass
+            return 1, "", f"Command timed out after {timeout} seconds"
+        except Exception as e:
+            logger.error(f"Exception running VMware command: {str(e)}")
+            return 1, "", f"Exception: {str(e)}"
     
     def revert_to_snapshot(self) -> bool:
         """Revert VM to clean snapshot"""
         logger.info(f"Reverting VM to snapshot: {self.snapshot_name}")
-        returncode, stdout, stderr = self._run_vmrun("revertToSnapshot", self.snapshot_name)
+        
+        # First check if VM is registered
+        vm_check_code, vm_check_out, vm_check_err = self._run_vmrun("list", timeout=30)
+        if vm_check_code != 0:
+            logger.error("Failed to list VMs, VMware may not be running properly")
+            return False
+        
+        if self.vm_path not in vm_check_out:
+            logger.error(f"VM not found in registered VMs list. Check VM path: {self.vm_path}")
+            logger.debug(f"Registered VMs: {vm_check_out}")
+            return False
+        
+        # List available snapshots
+        snap_code, snap_out, snap_err = self._run_vmrun("listSnapshots", timeout=30)
+        if snap_code != 0:
+            logger.error(f"Failed to list snapshots: {snap_err}")
+            return False
+        
+        # Check if our snapshot exists
+        if self.snapshot_name not in snap_out:
+            logger.error(f"Snapshot '{self.snapshot_name}' not found")
+            logger.error(f"Available snapshots: {snap_out}")
+            return False
+        
+        # Try to revert to snapshot with explicit timeout
+        returncode, stdout, stderr = self._run_vmrun("revertToSnapshot", self.snapshot_name, timeout=120)
+        
         if returncode == 0:
             logger.info("Successfully reverted to snapshot")
         else:
             logger.error(f"Failed to revert to snapshot: {stderr}")
+            
+            # Check VM state
+            state_code, state_out, state_err = self._run_vmrun("getGuestIPAddress", timeout=10)
+            if state_code == 0:
+                logger.info(f"VM appears to be running with IP: {state_out.strip()}")
+            else:
+                logger.info("VM does not appear to be running")
+                
         return returncode == 0
         
     def start(self) -> bool:
         """Start the virtual machine"""
         logger.info("Starting VM")
-        returncode, stdout, stderr = self._run_vmrun("start")
+        returncode, stdout, stderr = self._run_vmrun("start", timeout=60)
         
         if returncode == 0:
             logger.info("VM start command issued successfully")
             logger.info("Waiting 60 seconds for VM to fully boot...")
             # Wait for VM to fully boot up
-            time.sleep(60)  # Windows may need more time to boot
-            logger.info("Wait completed, VM should be ready")
+            start_time = time.time()
+            vm_ready = False
+            
+            while time.time() - start_time < 120:  # Wait up to 2 minutes
+                time.sleep(10)  # Check every 10 seconds
+                
+                # Try to get VM's IP address as a sign it's running
+                ip_code, ip_out, ip_err = self._run_vmrun("getGuestIPAddress", timeout=10)
+                if ip_code == 0 and ip_out.strip():
+                    logger.info(f"VM is running with IP: {ip_out.strip()}")
+                    vm_ready = True
+                    break
+                
+                logger.debug("VM not ready yet, waiting...")
+            
+            if not vm_ready:
+                logger.warning("VM started but may not be fully booted after waiting period")
+            
         else:
             logger.error(f"Failed to start VM: {stderr}")
             
