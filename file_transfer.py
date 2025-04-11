@@ -27,9 +27,6 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
             s.sendall((file_message + "END_OF_TRANSMISSION").encode())
             
             response = s.recv(1024).decode()
-            print("1")
-            print(response)
-            print("2/n")
             if response.startswith("SUCCESS:"):
                 print(f"✓ {response[8:]}")
                 
@@ -40,7 +37,8 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as exec_socket:
                         exec_socket.settimeout(10)
                         exec_socket.connect((ip_address, port))
-                        exec_socket.sendall(f"EXECUTE:{file_name}END_OF_TRANSMISSION".encode())
+                        # Keep the end transmission marker separate
+                        exec_socket.sendall(f"EXECUTE:{file_name}".encode() + "END_OF_TRANSMISSION".encode())
                         exec_response = exec_socket.recv(1024).decode()
                         
                         if exec_response.startswith("SUCCESS:"):

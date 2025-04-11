@@ -25,6 +25,8 @@ def handle_client(conn, addr, save_dir):
     
     try:
         message = buffer.decode()
+        if "END_OF_TRANSMISSION" in message:
+            message = message.split("END_OF_TRANSMISSION")[0]
         
         if message.startswith("FILE:"):
             try:
@@ -37,6 +39,10 @@ def handle_client(conn, addr, save_dir):
                 save_path = save_file(file_name, encoded_content, save_dir)
                 if save_path:
                     response = f"SUCCESS:File received and saved: {file_name}"
+                    # Store the file path globally for this module to use
+                    global last_saved_file, last_saved_path
+                    last_saved_file = file_name
+                    last_saved_path = save_path
                 else:
                     response = "ERROR:Failed to save file"
                 
@@ -47,13 +53,19 @@ def handle_client(conn, addr, save_dir):
         
         elif message.startswith("EXECUTE:"):
             _, file_name = message.split(":", 1)
+            file_name = file_name.strip()
+            
+            print(f"Execution request for file: '{file_name}'")
             
             file_path = os.path.join(save_dir, file_name)
+            print(f"Looking for file at: {file_path}")
             
             if os.path.exists(file_path):
+                print(f"File found, executing...")
                 result = execute_file(file_path)
                 conn.sendall(f"SUCCESS:{result}".encode())
             else:
+                print(f"File not found at path: {file_path}")
                 conn.sendall(f"ERROR:File not found: {file_name}".encode())
         
         elif message.startswith("PING"):
@@ -66,3 +78,7 @@ def handle_client(conn, addr, save_dir):
         print(f"Error handling client: {str(e)}")
     finally:
         conn.close()
+
+# Global variables to track the last saved file
+last_saved_file = None
+last_saved_path = None
