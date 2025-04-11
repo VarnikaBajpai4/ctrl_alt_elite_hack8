@@ -1,0 +1,1 @@
+python app.py C:\Users\aarus\Downloads\testing_virtual_machine\test.exe --vm "C:\Users\aarus\OneDrive\Documents\Virtual Machines\Windows 11 x64\Windows 11 x64.vmx"
