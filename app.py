@@ -65,32 +65,43 @@ class VMwareController:
         cmd = [self.vmrun_path, "-T", "ws", command, self.vm_path, *args]
         logger.debug(f"Running command: {' '.join(cmd)}")
         
-        process = subprocess.Popen(
-            cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
-        stdout, stderr = process.communicate()
-        
-        if process.returncode != 0:
-            logger.warning(f"vmrun command failed: {stderr}")
-        
-        return process.returncode, stdout, stderr
+        try:
+            # Add timeout to prevent hanging
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            stdout, stderr = process.communicate(timeout=180)  # 3 minute timeout
+            
+            if process.returncode != 0:
+                logger.warning(f"vmrun command failed: {stderr}")
+            
+            return process.returncode, stdout, stderr
+        except subprocess.TimeoutExpired:
+            # Kill the process if it times out
+            process.kill()
+            logger.error(f"vmrun command timed out after 180 seconds: {' '.join(cmd)}")
+            return 1, "", "Command timed out"
     
     def revert_to_snapshot(self) -> bool:
         """Revert VM to clean snapshot"""
         logger.info(f"Reverting VM to snapshot: {self.snapshot_name}")
-        returncode, _, stderr = self._run_vmrun("revertToSnapshot", self.snapshot_name)
+        returncode, stdout, stderr = self._run_vmrun("revertToSnapshot", self.snapshot_name)
+        logger.info(f"Revert result: code={returncode}, stdout={stdout}, stderr={stderr}")
         return returncode == 0
         
     def start(self) -> bool:
         """Start the virtual machine"""
         logger.info("Starting VM")
-        returncode, _, _ = self._run_vmrun("start")
+        returncode, stdout, stderr = self._run_vmrun("start")
+        logger.info(f"VM start result: code={returncode}, stdout={stdout}, stderr={stderr}")
         
         # Wait for VM to fully boot up
+        logger.info("Waiting 60 seconds for VM to boot...")
         time.sleep(60)  # Windows may need more time to boot
+        logger.info("Boot wait completed")
         return returncode == 0
         
     def stop(self, hard: bool = False) -> bool:
@@ -724,6 +735,7 @@ def main():
         vm_controller = VMwareController(args.vmrun, args.vm, args.snapshot)
         analyzer = WindowsDynamicAnalyzer(vm_controller, args.output)
         
+        print("About to run analysis...")
         # Run analysis
         results_dir = analyzer.analyze(args.sample, args.args)
         
