@@ -1,0 +1,38 @@
+{
+  "processes": [],
+  "file_system": [],
+  "registry": [],
+  "network": [
+    {
+      "time": "13:01:50.389795",
+      "local_ip": "10.0.146.4",
+      "local_port": 59937,
+      "remote_ip": "18.66.50.69",
+      "remote_port": 443,
+      "remote_host": "server-18-66-50-69.bom78.r.cloudfront.net",
+      "status": "ESTABLISHED",
+      "process_id": 20252
+    },
+    {
+      "time": "13:01:50.409560",
+      "local_ip": "10.0.146.4",
+      "local_port": 59972,
+      "remote_ip": "216.58.203.34",
+      "remote_port": 443,
+      "remote_host": "bom12s05-in-f2.1e100.net",
+      "status": "ESTABLISHED",
+      "process_id": 20252
+    },
+    {
+      "time": "13:01:50.409560",
+      "local_ip": "10.0.146.4",
+      "local_port": 59590,
+      "remote_ip": "142.250.192.14",
+      "remote_port": 443,
+      "remote_host": "bom12s14-in-f14.1e100.net",
+      "status": "ESTABLISHED",
+      "process_id": 20252
+    }
+  ],
+  "process_tree": {}
+}
