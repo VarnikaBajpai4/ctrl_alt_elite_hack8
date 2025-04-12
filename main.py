@@ -194,64 +194,49 @@ def run_and_monitor(file_path, timeout=30):
             monitor.stop()
             return {"error": str(e)}, file_info
 
+def format_final_result(analysis):
+    """Format the final result based on confidence threshold."""
+    classification = "Malicious" if analysis["confidence"] > 90 else "Benign"
+    
+    result = {
+        "classification": classification,
+        "reasoning": analysis["reasoning"]
+    }
+    
+    return result
+
 def main():
-    st.title("Dynamic File Analysis System")
-    st.write("Upload a file to analyze its behavior and detect potential malicious activity.")
-    with st.spinner("Initializing Gemini..."):
-        model = configure_gemini()
-    uploaded_file = st.file_uploader("Choose a file to analyze")
-    timeout = st.slider("Analysis timeout (seconds)", min_value=5, max_value=60, value=30)
-    if uploaded_file:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            temp_file_path = tmp_file.name
-        st.write(f"Analyzing: {uploaded_file.name}")
-        with st.spinner("Running file in monitored environment..."):
-            behaviors, file_info = run_and_monitor(temp_file_path, timeout=timeout)
-        if "error" in behaviors and isinstance(behaviors, dict):
-            st.error(f"Error during analysis: {behaviors['error']}")
-        else:
-            with st.spinner("Analyzing behaviors with Gemini..."):
-                analysis = analyze_with_gemini(behaviors, file_info, model)
-                print(analysis)
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Analysis Results")
-                verdict_color = {
-                    "malicious": "red",
-                    "suspicious": "orange",
-                    "benign": "green",
-                    "error": "gray"
-                }.get(analysis["verdict"].lower(), "gray")
-                st.markdown(f"<h3 style='color: {verdict_color};'>Verdict: {analysis['verdict'].upper()}</h3>", unsafe_allow_html=True)
-                st.progress(analysis["confidence"] / 100)
-                st.write(f"Confidence: {analysis['confidence']}%")
-                st.subheader("Reasoning")
-                st.write(analysis["reasoning"])
-                st.subheader("Key Behaviors")
-                for behavior in analysis["key_behaviors"]:
-                    st.write(f"• {behavior}")
-                st.subheader("Recommendations")
-                for rec in analysis["recommendations"]:
-                    st.write(f"• {rec}")
-            with col2:
-                st.subheader("Raw Behavioral Data")
-                tabs = st.tabs(["Process Activity", "File System", "Registry", "Network"])
-                with tabs[0]:
-                    st.subheader("Processes Created")
-                    st.json(behaviors["processes"])
-                    st.subheader("Process Tree")
-                    st.json(behaviors["process_tree"])
-                with tabs[1]:
-                    st.subheader("File System Activity")
-                    st.json(behaviors["file_system"])
-                with tabs[2]:
-                    st.subheader("Registry Changes")
-                    st.json(behaviors["registry"])
-                with tabs[3]:
-                    st.subheader("Network Connections")
-                    st.json(behaviors["network"])
-        os.unlink(temp_file_path)
+    file_path = r"C:\Users\meena\Downloads\case studies final.pdf"  # This would be your file path variable
+    
+    print(f"Analyzing file: {file_path}")
+    
+    # Initialize the model
+    print("Initializing Gemini...")
+    model = configure_gemini()
+    
+    # Set timeout for analysis
+    timeout = 30
+    
+    # Run and monitor the file behavior
+    print(f"Running file in monitored environment with timeout of {timeout} seconds...")
+    behaviors, file_info = run_and_monitor(file_path, timeout=timeout)
+    
+    # Check for errors in behaviors
+    if isinstance(behaviors, dict) and "error" in behaviors:
+        print(f"Error during analysis: {behaviors['error']}")
+        return
+    
+    # Analyze behaviors with Gemini
+    print("Analyzing behaviors with Gemini...")
+    analysis = analyze_with_gemini(behaviors, file_info, model)
+    
+    # Format the final result
+    final_result = format_final_result(analysis)
+    
+    # Output the result
+    print("\n==== ANALYSIS RESULTS ====")
+    print(f"Classification: {final_result['classification']}")
+    print(f"\nReasoning: {final_result['reasoning']}")
 
 if __name__ == "__main__":
     main()
