@@ -8,6 +8,7 @@ import winreg
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from datetime import datetime
+import json
 
 class FileSystemWatcher(FileSystemEventHandler):
     def __init__(self):
@@ -344,3 +345,19 @@ class BehavioralMonitor:
             "network": network_connections,
             "process_tree": self.process_monitor.process_tree
         }
+
+    def save_to_json(self, file_path):
+        """
+        Save the behavioral monitoring data to a JSON file.
+        
+        Args:
+            file_path (str): Path where the JSON file should be saved
+        """
+        data = self.stop()
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Save to JSON file
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=2)

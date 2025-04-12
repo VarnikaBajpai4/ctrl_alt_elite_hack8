@@ -1,0 +1,38 @@
+{
+  "processes": [],
+  "file_system": [],
+  "registry": [],
+  "network": [
+    {
+      "time": "12:41:57.997865",
+      "local_ip": "10.0.146.4",
+      "local_port": 59176,
+      "remote_ip": "142.250.207.195",
+      "remote_port": 443,
+      "remote_host": "del12s10-in-f3.1e100.net",
+      "status": "ESTABLISHED",
+      "process_id": 20252
+    },
+    {
+      "time": "12:41:58.009742",
+      "local_ip": "::1",
+      "local_port": 8501,
+      "remote_ip": "::1",
+      "remote_port": 59210,
+      "remote_host": "Lenovo",
+      "status": "ESTABLISHED",
+      "process_id": 3412
+    },
+    {
+      "time": "12:41:58.032077",
+      "local_ip": "::1",
+      "local_port": 59197,
+      "remote_ip": "::1",
+      "remote_port": 8501,
+      "remote_host": "Lenovo",
+      "status": "ESTABLISHED",
+      "process_id": 2544
+    }
+  ],
+  "process_tree": {}
+}

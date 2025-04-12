@@ -219,6 +219,13 @@ def run_and_monitor(file_path, timeout=30):
             
             # Stop monitoring and get results
             behaviors = monitor.stop()
+            
+            # Save behavioral data to JSON file
+            analysis_dir = os.path.join("analysis_results", os.path.basename(file_path))
+            os.makedirs(analysis_dir, exist_ok=True)
+            json_path = os.path.join(analysis_dir, "behavioral_data.json")
+            monitor.save_to_json(json_path)
+            
             return behaviors, file_info
             
         except Exception as e:
