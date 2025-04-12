@@ -1,0 +1,38 @@
+{
+    "processes": [],
+    "file_system": [],
+    "registry": [],
+    "network": [
+        {
+            "time": "17:08:05.831026",
+            "local_ip": "10.0.113.173",
+            "local_port": 56249,
+            "remote_ip": "52.182.141.63",
+            "remote_port": 443,
+            "remote_host": "Unknown",
+            "status": "ESTABLISHED",
+            "process_id": 23396
+        },
+        {
+            "time": "17:08:05.831026",
+            "local_ip": "10.0.113.173",
+            "local_port": 56176,
+            "remote_ip": "142.250.183.195",
+            "remote_port": 443,
+            "remote_host": "bom07s33-in-f3.1e100.net",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        },
+        {
+            "time": "17:08:05.840386",
+            "local_ip": "10.0.113.173",
+            "local_port": 56131,
+            "remote_ip": "34.102.213.72",
+            "remote_port": 443,
+            "remote_host": "72.213.102.34.bc.googleusercontent.com",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        }
+    ],
+    "process_tree": {}
+}

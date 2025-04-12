@@ -1,5 +1,6 @@
 import os
 import sys
+import argparse
 from connection import ping_vm, test_connection
 from file_transfer import send_file_to_vm
 
@@ -17,6 +18,12 @@ def print_firewall_help():
     print("Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True")
 
 def main():
+    parser = argparse.ArgumentParser(description='VMware Host-to-Guest File Transfer Utility')
+    parser.add_argument('file_path', help='Path to the file to transfer')
+    # parser.add_argument('-e', '--execute', action='store_true', help='Execute file after transfer')
+    
+    args = parser.parse_args()
+    
     print("===== VMware Host-to-Guest File Transfer Utility =====")
     
     if not ping_vm(VM_IP):
@@ -28,9 +35,7 @@ def main():
         print_firewall_help()
         return
     
-    file_path = r"C:\\Users\\meena\\OneDrive\\Documents\\case studies.docx".strip('"')
-    
-    # execute = input("Execute file after transfer? (y/n): ").lower() == 'y'
+    file_path = args.file_path.strip('"')
     execute = True
     
     send_file_to_vm(VM_IP, PORT, file_path, execute)

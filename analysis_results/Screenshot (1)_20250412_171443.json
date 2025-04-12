@@ -1,0 +1,78 @@
+{
+    "processes": [],
+    "file_system": [],
+    "registry": [],
+    "network": [
+        {
+            "time": "17:14:35.544035",
+            "local_ip": "10.0.113.173",
+            "local_port": 56344,
+            "remote_ip": "142.250.76.202",
+            "remote_port": 443,
+            "remote_host": "bom12s10-in-f10.1e100.net",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        },
+        {
+            "time": "17:14:35.551242",
+            "local_ip": "10.0.113.173",
+            "local_port": 56131,
+            "remote_ip": "34.102.213.72",
+            "remote_port": 443,
+            "remote_host": "72.213.102.34.bc.googleusercontent.com",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        },
+        {
+            "time": "17:14:35.571508",
+            "local_ip": "10.0.113.173",
+            "local_port": 50259,
+            "remote_ip": "34.237.73.95",
+            "remote_port": 443,
+            "remote_host": "ec2-34-237-73-95.compute-1.amazonaws.com",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        },
+        {
+            "time": "17:14:40.508786",
+            "local_ip": "10.0.113.173",
+            "local_port": 56348,
+            "remote_ip": "104.18.18.125",
+            "remote_port": 443,
+            "remote_host": "Unknown",
+            "status": "ESTABLISHED",
+            "process_id": 23712
+        },
+        {
+            "time": "17:14:40.509805",
+            "local_ip": "10.0.113.173",
+            "local_port": 56117,
+            "remote_ip": "142.250.71.110",
+            "remote_port": 443,
+            "remote_host": "pnbomb-ad-in-f14.1e100.net",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        },
+        {
+            "time": "17:14:40.518041",
+            "local_ip": "10.0.113.173",
+            "local_port": 55993,
+            "remote_ip": "44.194.8.218",
+            "remote_port": 443,
+            "remote_host": "ec2-44-194-8-218.compute-1.amazonaws.com",
+            "status": "ESTABLISHED",
+            "process_id": 16204
+        },
+        {
+            "time": "17:14:40.524640",
+            "local_ip": "10.0.113.173",
+            "local_port": 54763,
+            "remote_ip": "34.228.252.247",
+            "remote_port": 443,
+            "remote_host": "ec2-34-228-252-247.compute-1.amazonaws.com",
+            "status": "ESTABLISHED",
+            "process_id": 16204
+        }
+    ],
+    "process_tree": {}
+}
