@@ -80,6 +80,7 @@ def handle_client(conn, addr, save_dir):
                     # result = execute_file(file_path)
                     result = analyze_file(file_path)
                     response = f"SUCCESS:{result}"
+                    print("YOOOOOOOOOOOOOOOOOOOO", response)
                 else:
                     print(f"File not found at: {file_path}")
                     # Try using the last saved file as fallback
@@ -88,6 +89,7 @@ def handle_client(conn, addr, save_dir):
                         # result = execute_file(last_saved_path)
                         result = analyze_file(last_saved_path)
                         response = f"SUCCESS:{result} (using last saved file)"
+                        print("YOOOOOOOOOOOOOOOOOOOO",response)
                     else:
                         response = f"ERROR:File not found: {file_name}"
                 

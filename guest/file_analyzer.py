@@ -217,17 +217,21 @@ def analyze_file(file_path = r"C:\Users\meena\Downloads\case studies final.pdf",
         print(f"Error during analysis: {behaviors['error']}")
         return
     
+    return behaviors
+    
     # Analyze behaviors with Gemini
-    print("Analyzing behaviors with Gemini...")
-    analysis = analyze_with_gemini(behaviors, file_info, model)
+    # print("Analyzing behaviors with Gemini...")
+    # analysis = analyze_with_gemini(behaviors, file_info, model)
     
     # Format the final result
-    final_result = format_final_result(analysis)
+    # final_result = format_final_result(analysis)
+
     
     # Output the result
-    print("\n==== ANALYSIS RESULTS ====")
-    print(f"Classification: {final_result['classification']}")
-    print(f"\nReasoning: {final_result['reasoning']}")
+    # print("\n==== ANALYSIS RESULTS ====")
+    # print(f"Classification: {final_result['classification']}")
+    # print(f"\nReasoning: {final_result['reasoning']}")
+    # return final_result
 
 
 def main():
