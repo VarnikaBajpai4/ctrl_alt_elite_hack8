@@ -44,8 +44,18 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
                             exec_socket.sendall(exec_command.encode())
                             
                             # More robust response handling
+                            # Replace the execution response reading logic with this:
                             try:
-                                exec_response = exec_socket.recv(1024).decode().strip()
+                                # Read response in chunks
+                                exec_response = b""
+                                while True:
+                                    chunk = exec_socket.recv(1024)
+                                    if not chunk:  # Connection closed
+                                        break
+                                    exec_response += chunk
+                                    
+                                exec_response = exec_response.decode().strip()
+                                
                                 if not exec_response:
                                     print("✓ Execution requested (no detailed response)")
                                     return True

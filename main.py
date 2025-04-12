@@ -30,7 +30,8 @@ def main():
     
     file_path = r"C:\\Users\\meena\\Downloads\\case studies final.pdf".strip('"')
     
-    execute = input("Execute file after transfer? (y/n): ").lower() == 'y'
+    # execute = input("Execute file after transfer? (y/n): ").lower() == 'y'
+    execute = True
     
     send_file_to_vm(VM_IP, PORT, file_path, execute)
 
