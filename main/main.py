@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import docker
 from datetime import datetime
+from document_feature_extractor import DocumentAnalyzer
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -161,37 +162,66 @@ def detect_file_type(file_path: Path) -> str:
     if file_type in ['application/x-dosexec', 'application/x-executable', 'application/x-sharedlib']:
         return 'executable'
 
-    if file_type == 'application/pdf':
+    # Check for RTF files specifically
+    if file_type == 'application/rtf' or file_type == 'text/rtf':
+        logger.debug("Detected RTF file")
+        return 'rtf document'
+
+    # Check for DOCX files specifically
+    if file_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        return 'doc'
+    elif file_type == 'application/pdf':
         return 'pdf'
-    elif file_type in ['application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                      'application/msword',
-                      'application/vnd.ms-word']:
+    elif file_type in ['application/msword', 'application/vnd.ms-word']:
         return 'doc'
     elif file_type in ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                       'application/vnd.ms-excel',
                       'application/vnd.ms-excel.sheet.macroEnabled.12']:
         return 'doc'  # Treat Excel files as documents
     elif file_type == 'application/zip':
-        return 'zip'
+        # Additional check to distinguish between DOCX and regular ZIP
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(4)
+                if header == b'PK\x03\x04':  # ZIP header
+                    # Check if it's a DOCX by looking for specific files
+                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                        if 'word/document.xml' in zip_ref.namelist():
+                            return 'doc'
+                        elif 'xl/workbook.xml' in zip_ref.namelist():
+                            return 'doc'
+            return 'zip'
+        except Exception as e:
+            logger.error(f"Error checking ZIP contents: {e}")
+            return 'zip'
     else:
         return 'unknown'
 
 async def analyze_document(file_path: Path, file_type: str) -> Dict[str, Any]:
-    """Analyze document files using document_feature_extractor"""
+    """Analyze a document file using the DocumentAnalyzer"""
     try:
-        from document_feature_extractor import DocumentAnalyzer
+        # Initialize document analyzer
         analyzer = DocumentAnalyzer()
-        result = analyzer.analyze_document(str(file_path), file_type)
-        return {
-            "document_analysis": result,
+        
+        # Use the complete analyze_document method that includes Gemini analysis
+        analysis_result = analyzer.analyze_document(str(file_path))
+        
+        logger.debug(f"Document analysis result: {analysis_result}")
+        
+        if analysis_result.get("error"):
+            return {"error": analysis_result["error"]}
+        
+        # Combine results
+        result = {
+            "analysis": analysis_result,
             "error": None
         }
+        
+        return result
+        
     except Exception as e:
-        logger.error(f"Document analysis failed: {str(e)}")
-        return {
-            "document_analysis": {},
-            "error": f"Document analysis failed: {str(e)}"
-        }
+        logger.error(f"Error analyzing document: {str(e)}")
+        return {"error": str(e)}
 
 async def run_ember_analysis(file_path: Path) -> Dict[str, Any]:
     """Run EMBER analysis on the executable"""
@@ -435,17 +465,16 @@ async def process_single_file(file: UploadFile, background_tasks: BackgroundTask
                 if not final_file:
                     return {"error": "No valid files found in zip archive"}
                 
-                # Detect type of the final extracted file
-                file_type = detect_file_type(final_file)
-                logger.debug(f"Detected type of extracted file: {file_type}")
-                
                 # Update file path to the extracted file
                 fp = final_file
+                # Re-detect file type for the extracted file
+                file_type = detect_file_type(fp)
+                logger.debug(f"Detected type of extracted file: {file_type}")
             except Exception as e:
                 return {"error": f"Failed to process zip file: {str(e)}"}
         
         result = {}
-        if file_type in ['pdf', 'doc']:
+        if file_type in ['pdf', 'doc', 'ole compound file', 'rtf document', 'xlsm', 'xlsx']:
             # Handle document files
             doc_result = await analyze_document(fp, file_type)
             if doc_result.get("error"):
