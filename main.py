@@ -28,7 +28,7 @@ def main():
         print_firewall_help()
         return
     
-    file_path = r"C:\\Users\\meena\\Downloads\\case studies final.pdf".strip('"')
+    file_path = r"C:\\Users\\meena\\OneDrive\\Documents\\case studies.docx".strip('"')
     
     # execute = input("Execute file after transfer? (y/n): ").lower() == 'y'
     execute = True

@@ -2,6 +2,9 @@ import socket
 import os
 import time
 import base64
+import json
+import datetime
+import ast  # Add this import for literal_eval
 
 def send_file_to_vm(ip_address, port, file_path, execute=False):
     if not os.path.isfile(file_path):
@@ -44,7 +47,6 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
                             exec_socket.sendall(exec_command.encode())
                             
                             # More robust response handling
-                            # Replace the execution response reading logic with this:
                             try:
                                 # Read response in chunks
                                 exec_response = b""
@@ -53,9 +55,36 @@ def send_file_to_vm(ip_address, port, file_path, execute=False):
                                     if not chunk:  # Connection closed
                                         break
                                     exec_response += chunk
-                                    
+                                
                                 exec_response = exec_response.decode().strip()
                                 
+                                # Save the response if it looks like a Python dictionary
+                                if exec_response and (exec_response.startswith("SUCCESS:") or exec_response.startswith("{")):
+                                    # Extract the dictionary part if it starts with SUCCESS:
+                                    if exec_response.startswith("SUCCESS:"):
+                                        dict_str = exec_response[8:].strip()
+                                    else:
+                                        dict_str = exec_response
+                                    
+                                    try:
+                                        # Use ast.literal_eval to safely parse the Python dictionary string
+                                        analysis_data = ast.literal_eval(dict_str)
+                                        
+                                        # Create analysis_results directory if it doesn't exist
+                                        os.makedirs("analysis_results", exist_ok=True)
+                                        
+                                        # Create a filename based on the original file and timestamp
+                                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                        output_filename = f"analysis_results/{os.path.splitext(file_name)[0]}_{timestamp}.json"
+                                        
+                                        # Save the data to a JSON file
+                                        with open(output_filename, 'w', encoding='utf-8') as f:
+                                            json.dump(analysis_data, f, indent=4)
+                                        print(f"✓ Analysis saved to {output_filename}")
+                                    except (SyntaxError, ValueError) as e:
+                                        print(f"✗ Could not parse response as Python dictionary: {e}")
+                                
+                                # Print the response for the user
                                 if not exec_response:
                                     print("✓ Execution requested (no detailed response)")
                                     return True

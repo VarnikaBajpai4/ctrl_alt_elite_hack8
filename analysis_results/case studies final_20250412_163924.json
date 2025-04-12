@@ -1,0 +1,48 @@
+{
+    "processes": [],
+    "file_system": [],
+    "registry": [],
+    "network": [
+        {
+            "time": "16:39:21.845429",
+            "local_ip": "10.0.113.173",
+            "local_port": 55272,
+            "remote_ip": "142.250.192.74",
+            "remote_port": 443,
+            "remote_host": "bom12s16-in-f10.1e100.net",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        },
+        {
+            "time": "16:39:21.858074",
+            "local_ip": "10.0.113.173",
+            "local_port": 55401,
+            "remote_ip": "142.250.183.99",
+            "remote_port": 443,
+            "remote_host": "bom12s13-in-f3.1e100.net",
+            "status": "ESTABLISHED",
+            "process_id": 9192
+        },
+        {
+            "time": "16:39:21.869122",
+            "local_ip": "10.0.113.173",
+            "local_port": 54232,
+            "remote_ip": "18.214.20.142",
+            "remote_port": 443,
+            "remote_host": "ec2-18-214-20-142.compute-1.amazonaws.com",
+            "status": "ESTABLISHED",
+            "process_id": 16204
+        },
+        {
+            "time": "16:39:21.869122",
+            "local_ip": "10.0.113.173",
+            "local_port": 55094,
+            "remote_ip": "140.82.113.26",
+            "remote_port": 443,
+            "remote_host": "lb-140-82-113-26-iad.github.com",
+            "status": "ESTABLISHED",
+            "process_id": 9692
+        }
+    ],
+    "process_tree": {}
+}
