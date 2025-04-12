@@ -79,12 +79,9 @@ class AnalysisResult(BaseModel):
             float: lambda v: round(float(v), 5)  # Format floats to 5 decimal places
         }
 
-class ELFAnalysisResult(BaseModel):
-    file: str
-    probability: float
-    prediction: str
-    features: List[float]
-    error: Optional[str] = None
+class MultiFileAnalysisResult(BaseModel):
+    results: List[AnalysisResult]
+    errors: List[str]
 
 def is_zip_file(file_path: Path) -> bool:
     """Check if file is a zip file"""
@@ -389,14 +386,11 @@ def check_directory_access(path: Path):
     if not os.access(path, os.R_OK | os.W_OK):
         raise HTTPException(500, f"Directory {path} is not accessible")
 
-@app.post("/analyze", response_model=AnalysisResult)
-async def analyze_file(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
-):
+async def process_single_file(file: UploadFile, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    """Process a single file and return its analysis result"""
     try:
         if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
+            return {"error": "No file provided"}
 
         # Generate unique filename
         unique_filename = f"{os.urandom(8).hex()}_{file.filename}"
@@ -412,15 +406,15 @@ async def analyze_file(
             with open(fp, "wb") as f:
                 content = await file.read()
                 if not content:
-                    raise HTTPException(status_code=400, detail="Empty file provided")
+                    return {"error": "Empty file provided"}
                 logger.debug(f"File size: {len(content)} bytes")
                 f.write(content)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+            return {"error": f"Failed to save file: {str(e)}"}
 
         # Check if file exists and is accessible
         if not fp.exists():
-            raise HTTPException(status_code=500, detail=f"Failed to save file to {fp}")
+            return {"error": f"Failed to save file to {fp}"}
         
         # Create output directory
         os.makedirs(out_dir, exist_ok=True)
@@ -439,10 +433,7 @@ async def analyze_file(
                 # Process nested zip files
                 final_file = await process_nested_zip(fp, extract_dir)
                 if not final_file:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No valid files found in zip archive"
-                    )
+                    return {"error": "No valid files found in zip archive"}
                 
                 # Detect type of the final extracted file
                 file_type = detect_file_type(final_file)
@@ -450,24 +441,20 @@ async def analyze_file(
                 
                 # Update file path to the extracted file
                 fp = final_file
-            except HTTPException:
-                raise
             except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to process zip file: {str(e)}"
-                )
+                return {"error": f"Failed to process zip file: {str(e)}"}
         
+        result = {}
         if file_type in ['pdf', 'doc']:
             # Handle document files
-            result = await analyze_document(fp, file_type)
-            if result.get("error"):
-                return AnalysisResult(type="document", error=result["error"])
-            return AnalysisResult(type="document", document_analysis=result)
+            doc_result = await analyze_document(fp, file_type)
+            if doc_result.get("error"):
+                result = {"type": "document", "error": doc_result["error"]}
+            else:
+                result = {"type": "document", "document_analysis": doc_result}
         elif file_type == 'elf':
             # Handle ELF files using ember_elf directly
             try:
-                # Run ELF analysis directly using Python
                 logger.debug(f"Running ELF analysis on {fp}")
                 ember_proc = subprocess.run(
                     [sys.executable, str(EMBER_ELF_DIR / "predict.py"), str(fp)],
@@ -482,111 +469,72 @@ async def analyze_file(
                     if ember_proc.stdout:
                         error_msg += f"Standard output: {ember_proc.stdout}\n"
                     logger.error(error_msg)
-                    raise Exception(error_msg)
-
-                try:
-                    result = json.loads(ember_proc.stdout.strip())
-                except json.JSONDecodeError as e:
-                    error_msg = f"Failed to parse ELF analysis output: {str(e)}\n"
-                    error_msg += f"Raw output: {ember_proc.stdout}\n"
-                    logger.error(error_msg)
-                    raise Exception(error_msg)
-
-                if result.get("error"):
-                    logger.error(f"ELF analysis returned error: {result['error']}")
-                    raise Exception(result["error"])
-
-                logger.debug(f"ELF analysis successful: {result}")
-                return AnalysisResult(
-                    type="executable",
-                    ember_probability=result["elf_probability"],
-                    ember_important_features={
-                        "raw_features": result.get("elf_features", {}),
-                        "prediction": result.get("elf_prediction", ""),
-                        "file": result.get("elf_file", "")
-                    },
-                    error=None
-                )
+                    result = {"type": "executable", "error": error_msg}
+                else:
+                    try:
+                        ember_result = json.loads(ember_proc.stdout.strip())
+                        result = {
+                            "type": "executable",
+                            "ember_probability": ember_result["elf_probability"],
+                            "ember_important_features": {
+                                "raw_features": ember_result.get("elf_features", {}),
+                                "prediction": ember_result.get("elf_prediction", ""),
+                                "file": ember_result.get("elf_file", "")
+                            },
+                            "error": None
+                        }
+                    except json.JSONDecodeError as e:
+                        error_msg = f"Failed to parse ELF analysis output: {str(e)}"
+                        result = {"type": "executable", "error": error_msg}
 
             except Exception as e:
-                logger.error(f"ELF analysis failed: {str(e)}")
-                return AnalysisResult(type="executable", error=str(e))
+                result = {"type": "executable", "error": str(e)}
         elif file_type == 'executable':
             # Handle other executables using ember
-            result = await analyze_executable(fp, out_dir)
-            if result.get("error"):
-                return AnalysisResult(type="executable", error=result["error"])
-            return AnalysisResult(type="executable", **result)
+            exe_result = await analyze_executable(fp, out_dir)
+            if exe_result.get("error"):
+                result = {"type": "executable", "error": exe_result["error"]}
+            else:
+                result = {"type": "executable", **exe_result}
         else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type: {file_type}. Supported types: PDF, Office documents, ELF files, executables, and zip files containing these types"
-            )
+            result = {"error": f"Unsupported file type: {file_type}"}
 
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions as is
+        # Schedule cleanup
+        background_tasks.add_task(cleanup_files, fp, out_dir)
+        return result
+
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return AnalysisResult(type="unknown", error=str(e))
+        return {"error": str(e)}
 
-    finally:
-        # Schedule cleanup regardless of success/failure
-        background_tasks.add_task(cleanup_files, fp, out_dir)
-
-@app.post("/analyze/elf", response_model=ELFAnalysisResult)
-async def analyze_elf_file(file: UploadFile = File(...)):
+@app.post("/analyze", response_model=MultiFileAnalysisResult)
+async def analyze_files(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...)
+):
+    """Analyze multiple files in parallel"""
     try:
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
+        if not files:
+            raise HTTPException(status_code=400, detail="No files provided")
 
-        # Generate unique filename
-        unique_filename = f"{os.urandom(8).hex()}_{file.filename}"
-        fp = DATA_DIR / unique_filename
+        # Process all files in parallel
+        tasks = [process_single_file(file, background_tasks) for file in files]
+        results = await asyncio.gather(*tasks)
 
-        # Save uploaded file
-        try:
-            with open(fp, "wb") as f:
-                content = await file.read()
-                if not content:
-                    raise HTTPException(status_code=400, detail="Empty file provided")
-                f.write(content)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+        # Separate results and errors
+        analysis_results = []
+        errors = []
+        for result in results:
+            if "error" in result and result["error"]:
+                errors.append(result["error"])
+            else:
+                analysis_results.append(result)
 
-        # Check if file exists and is accessible
-        if not fp.exists():
-            raise HTTPException(status_code=500, detail=f"Failed to save file to {fp}")
+        return MultiFileAnalysisResult(results=analysis_results, errors=errors)
 
-        # Run ELF analysis
-        try:
-            # Run ELF analysis directly using Python
-            ember_proc = subprocess.run(
-                [sys.executable, str(EMBER_ELF_DIR / "predict.py"), str(fp)],
-                capture_output=True,
-                text=True
-            )
-
-            if ember_proc.returncode != 0:
-                raise Exception(f"ELF analysis failed: {ember_proc.stderr}")
-
-            result = json.loads(ember_proc.stdout.strip())
-            if result.get("error"):
-                raise Exception(result["error"])
-
-            return result
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        # Cleanup the uploaded file
-        if fp.exists():
-            fp.unlink()
+        logger.error(f"Unexpected error: {str(e)}")
+        return MultiFileAnalysisResult(results=[], errors=[str(e)])
 
 @app.on_event("startup")
 async def startup_event():
