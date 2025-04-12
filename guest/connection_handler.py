@@ -1,6 +1,7 @@
 import os
 import traceback
 from file_handler import save_file, execute_file
+from file_analyzer import analyze_file
 
 def handle_client(conn, addr, save_dir):
     print(f"Connected by {addr}")
@@ -76,14 +77,16 @@ def handle_client(conn, addr, save_dir):
                 
                 if os.path.exists(file_path):
                     print(f"File found, executing...")
-                    result = execute_file(file_path)
+                    # result = execute_file(file_path)
+                    result = analyze_file(file_path)
                     response = f"SUCCESS:{result}"
                 else:
                     print(f"File not found at: {file_path}")
                     # Try using the last saved file as fallback
                     if last_saved_file and last_saved_path and os.path.exists(last_saved_path):
                         print(f"Trying last saved file instead: {last_saved_path}")
-                        result = execute_file(last_saved_path)
+                        # result = execute_file(last_saved_path)
+                        result = analyze_file(last_saved_path)
                         response = f"SUCCESS:{result} (using last saved file)"
                     else:
                         response = f"ERROR:File not found: {file_name}"

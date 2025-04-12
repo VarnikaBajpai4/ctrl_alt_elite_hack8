@@ -9,6 +9,14 @@ SAVE_DIR = os.path.join(os.environ['USERPROFILE'], 'Downloads', 'VMTransfers')
 
 def main():
     os.makedirs(SAVE_DIR, exist_ok=True)
+
+    try:
+        # For Windows
+        if os.name == 'nt':
+            import stat
+            os.chmod(SAVE_DIR, stat.S_IRWXU)
+    except Exception as e:
+        print(f"Warning: Couldn't set permissions on save directory: {e}")
     
     print(f"=== VM File Transfer Listener ===")
     print(f"Saving files to: {SAVE_DIR}")
