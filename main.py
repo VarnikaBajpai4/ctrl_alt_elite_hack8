@@ -28,7 +28,7 @@ def main():
         print_firewall_help()
         return
     
-    file_path = r"C:\Users\aarus\Downloads\Alpharithm Lesson 21 - Google Slides - 15 October 2024 (online-video-cutter.com)-2.txt".strip('"')
+    file_path = r"C:\Users\meena\Downloads\case studies final.pdf".strip('"')
     
     execute = input("Execute file after transfer? (y/n): ").lower() == 'y'
     
