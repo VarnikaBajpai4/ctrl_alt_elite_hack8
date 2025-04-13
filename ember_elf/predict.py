@@ -3,7 +3,7 @@ import os
 import numpy as np
 import lightgbm as lgb
 import json
-from generate_features import ELFFeatureExtractor
+from ML_Models.ember_elf.generate_features import ELFFeatureExtractor
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -59,7 +59,7 @@ def predict_elf_file(file_path, model, extractor):
         # Get file name
         file_name = os.path.basename(file_path)
         
-        # Convert numpy types to Python native types, preserving strings and lists
+        # Convert numpy types to Python native types
         prob = float(prob)  # Convert numpy float to Python float
         
         def convert_value(v):
@@ -71,10 +71,16 @@ def predict_elf_file(file_path, model, extractor):
                 return int(v)
             elif isinstance(v, (np.floating, float)):
                 return float(v)
+            elif isinstance(v, dict):
+                return {k: convert_value(v) for k, v in v.items()}
             else:
                 return v
         
+        # Convert all numpy types in raw_features
         raw_features = {k: convert_value(v) for k, v in raw_features.items()}
+        
+        # Convert all numpy types in features
+        features = convert_value(features.tolist())
         
         return {
             'elf_file': file_name,

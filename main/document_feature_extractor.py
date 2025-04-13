@@ -3,8 +3,8 @@ import os
 import zipfile
 import binascii
 import json
-import google.generativeai as genai
-from dotenv import load_dotenv
+import subprocess
+from typing import Dict, List, Any, Tuple
 from oletools.olevba import VBA_Parser
 from olefile import isOleFile, OleFileIO
 from oletools.crypto import is_encrypted
@@ -15,259 +15,780 @@ from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.converter import TextConverter
 from pdfminer.layout import LAParams
 from io import StringIO
-import subprocess
-from typing import Dict, List, Any
+import yara
+import logging
+from dotenv import load_dotenv
+import google.generativeai as genai
+
+logger = logging.getLogger(__name__)
 
 class DocumentAnalyzer:
     def __init__(self):
-        # Load environment variables from ML_Models/.env
-        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-        load_dotenv(env_path)
-        
-        # Initialize Gemini
-        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-        self.model = genai.GenerativeModel("models/gemini-1.5-flash")
-        
         self.known_headers = {
-            "D0CF11E0A1B11AE1": "OLE Compound File",
+            "D0CF11E0A1B11AE1": "OLE Compound File",  # DOC, XLS, PPT
             "4D5A": "Windows Executable",
             "25504446": "PDF Document",
-            "504B0304": "ZIP Archive",
-            "7B5C727466": "RTF Document",
+            "504B0304": "ZIP Archive",  # DOCX, XLSX, PPTX
+            "7B5C727466": "RTF Document",  # RTF signature
+            "CF11E0": "DOC File",  # Specific DOC signature
+            "ECA5C100": "DOC File",  # Another DOC signature
         }
         
         self.suspicious_keywords = [
             "Shell", "CreateObject", "WScript.Shell", "powershell", "cmd.exe",
             "AutoOpen", "Document_Open", "Workbook_Open", "ExecuteExcel4Macro",
-            "GetObject", "Run", "URLDownloadToFile", "Msxml2.XMLHTTP"
+            "GetObject", "Run", "URLDownloadToFile", "Msxml2.XMLHTTP",
+            "RegRead", "RegWrite", "RegDelete", "WScript.Network",
+            "ADODB.Stream", "Scripting.FileSystemObject", "eval", "Execute",
+            "ActiveXObject", "new ActiveXObject", "WScript.CreateObject"
         ]
 
-    def fetch_urls(self, buffer: str) -> List[str]:
-        urls = re.findall(r"http[s]?://[a-zA-Z0-9./?=_%:-]*", buffer)
-        return list(set(urls))
+        self.pdf_suspicious_patterns = [
+            "/JavaScript", "/JS", "/AcroForm", "/OpenAction", 
+            "/Launch", "/LaunchUrl", "/EmbeddedFile", "/URI", 
+            "/Action", "cmd.exe", "system32", "%HOMEDRIVE%",
+            "<script>"
+        ]
 
-    def detect_dde(self, text: str) -> bool:
-        return "DDEAUTO" in text or bool(re.search(r"DDE\s*\(|DDEAUTO", text, re.IGNORECASE))
+        # Add DOC-specific suspicious patterns
+        self.doc_suspicious_patterns = [
+            "\\object", "\\objupdate", "\\objdata", "\\objclass",  # OLE objects
+            "\\bin", "\\pict", "\\macpict",  # Embedded objects
+            "\\fldinst", "\\fldrslt",  # Fields
+            "\\ddeauto", "\\dde",  # DDE
+            "\\oleobj", "\\objemb",  # OLE embedding
+            "\\objlink", "\\objocx",  # OLE linking
+            "\\objupdate", "\\objautlink",  # OLE auto-update
+            "\\objalias", "\\objhtml"  # OLE HTML
+        ]
 
-    def detect_suspicious_keywords(self, text: str) -> List[str]:
-        return [k for k in self.suspicious_keywords if k.lower() in text.lower()]
+        # Add RTF-specific suspicious patterns
+        self.rtf_suspicious_patterns = [
+            "\\object", "\\objclass", "\\objdata",  # OLE objects
+            "\\bin", "\\pict", "\\macpict",  # Embedded objects
+            "\\fldinst", "\\fldrslt",  # Fields
+            "\\ddeauto", "\\dde",  # DDE
+            "\\oleobj", "\\objemb",  # OLE embedding
+            "\\objlink", "\\objocx",  # OLE linking
+            "\\objupdate", "\\objautlink",  # OLE auto-update
+            "\\objalias", "\\objhtml",  # OLE HTML
+            "\\objupdate", "\\objautlink",  # OLE auto-update
+            "\\objalias", "\\objhtml",  # OLE HTML
+            "\\objocx", "\\objupdate",  # OLE controls
+            "\\objautlink", "\\objalias",  # OLE auto-linking
+            "\\objhtml", "\\objocx",  # OLE HTML and controls
+            "\\objupdate", "\\objautlink",  # OLE auto-update
+            "\\objalias", "\\objhtml"  # OLE HTML
+        ]
 
-    def binary_analysis(self, name: str, data: bytes) -> Dict[str, str]:
-        header = binascii.hexlify(data[:12]).upper().decode()
-        for sig, desc in self.known_headers.items():
-            if header.startswith(sig):
-                return {"name": name, "type": desc}
-        return {"name": name, "type": "Unknown binary"}
+        # Initialize YARA rules
+        self.yara_rules = self.load_yara_rules()
 
-    def analyze_zip_structure(self, filepath: str) -> Dict[str, Any]:
-        result = {"files": [], "binary_analysis": []}
+    def load_yara_rules(self):
+        """Load YARA rules from the YaraRules_Multiple directory"""
         try:
-            zipdoc = zipfile.ZipFile(filepath)
-            result["files"] = zipdoc.namelist()
+            # Get the directory where the script is located
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            rules_dir = os.path.join(script_dir, "Systems", "Multiple", "YaraRules_Multiple")
             
-            for name in zipdoc.namelist():
-                if "embedding" in name or name.endswith(".bin"):
-                    result["binary_analysis"].append(self.binary_analysis(name, zipdoc.read(name)))
+            if not os.path.exists(rules_dir):
+                print(f"Warning: YARA rules directory not found at {rules_dir}")
+                return None
+            
+            rules = {}
+            for rule_file in os.listdir(rules_dir):
+                if rule_file.endswith(('.yara', '.yar')):
+                    try:
+                        rules[rule_file] = yara.compile(os.path.join(rules_dir, rule_file))
+                    except yara.SyntaxError as e:
+                        print(f"Error compiling rule {rule_file}: {str(e)}")
+            return rules
         except Exception as e:
-            result["error"] = str(e)
-        return result
+            print(f"Error loading YARA rules: {str(e)}")
+            return None
 
-    def analyze_ole_streams(self, filepath: str) -> Dict[str, Any]:
-        result = {"streams": [], "urls": []}
+    def scan_with_yara(self, filepath: str) -> List[str]:
+        """Scan a file with YARA rules"""
+        if not self.yara_rules:
+            return []
+        
         try:
-            ole = OleFileIO(filepath)
-            result["streams"] = ["/".join(stream) for stream in ole.listdir()]
+            matches = []
+            file_data = open(filepath, "rb").read()
             
-            for stream in ole.listdir():
-                data = ole.openstream(stream).read()
-                strings = re.findall(rb"[a-zA-Z0-9:/\\._-]{6,}", data)
-                for s in strings:
-                    if b"http" in s:
-                        result["urls"].append(s.decode('latin1'))
-            ole.close()
+            for rule_name, rule in self.yara_rules.items():
+                try:
+                    rule_matches = rule.match(data=file_data)
+                    if rule_matches:
+                        for match in rule_matches:
+                            matches.append({
+                                "rule": rule_name,
+                                "description": match.meta.get("description", ""),
+                                "severity": match.meta.get("severity", "unknown"),
+                                "category": match.meta.get("category", "unknown")
+                            })
+                except Exception as e:
+                    print(f"Error scanning with rule {rule_name}: {str(e)}")
+            
+            return matches
         except Exception as e:
-            result["error"] = str(e)
-        return result
+            print(f"Error during YARA scanning: {str(e)}")
+            return []
 
-    def analyze_macros(self, filepath: str) -> Dict[str, Any]:
-        result = {"vba_macros": [], "xlm_macros": [], "suspicious_keywords": [], "dde_detected": False, "urls": []}
+    def detect_file_type(self, filepath: str) -> str:
+        """Detect file type using both magic numbers and file command"""
         try:
-            vbaparser = VBA_Parser(filepath)
+            # Check magic numbers
+            with open(filepath, 'rb') as f:
+                header = binascii.hexlify(f.read(8)).upper().decode()
+                
+                # Check for Office file signatures
+                if header.startswith("D0CF11E0A1B11AE1"):  # OLE Compound File
+                    # Check for specific Office file types
+                    f.seek(0)
+                    content = f.read()
+                    if b"Word.Document" in content:
+                        return "doc"
+                    elif b"Excel.Sheet" in content:
+                        return "xlsm"
+                    return "ole compound file"
+                elif header.startswith("504B0304"):  # ZIP header
+                    # Check if it's an Office Open XML file
+                    try:
+                        with zipfile.ZipFile(filepath) as zip_ref:
+                            if 'word/document.xml' in zip_ref.namelist():
+                                return "doc"
+                            elif 'xl/workbook.xml' in zip_ref.namelist():
+                                # Check for VBA project to confirm XLSM
+                                if 'xl/vbaProject.bin' in zip_ref.namelist():
+                                    return "xlsm"
+                                return "xlsx"
+                            elif 'ppt/presentation.xml' in zip_ref.namelist():
+                                return "ppt"
+                    except:
+                        pass
+                    return "zip archive"
+                elif header.startswith("25504446"):  # PDF
+                    return "pdf document"
+                elif header.startswith("7B5C727466"):  # RTF
+                    return "rtf document"
             
-            if vbaparser.detect_vba_macros():
-                for (_, _, fname, code) in vbaparser.extract_macros():
-                    macro_info = {
-                        "name": fname,
-                        "code_preview": code.strip()[:1000],
-                        "suspicious_keywords": self.detect_suspicious_keywords(code),
-                        "dde_detected": self.detect_dde(code),
-                        "urls": self.fetch_urls(code)
-                    }
-                    result["vba_macros"].append(macro_info)
-            
-            if vbaparser.detect_xlm_macros():
-                for macro in vbaparser.xlm_macros:
-                    macro_info = {
-                        "code_preview": macro.strip()[:1000],
-                        "suspicious_keywords": self.detect_suspicious_keywords(macro),
-                        "dde_detected": self.detect_dde(macro),
-                        "urls": self.fetch_urls(macro)
-                    }
-                    result["xlm_macros"].append(macro_info)
-        except Exception as e:
-            result["error"] = str(e)
-        return result
-
-    def analyze_rtf(self, filepath: str) -> Dict[str, Any]:
-        result = {"patterns": [], "verdict_keywords": set()}
-        try:
-            with open(filepath, 'r', encoding='latin-1') as f:
-                content = f.read()
-
-            patterns = [
-                (r'%[0-9A-Fa-f]{2,}', "Hex-encoded obfuscation", "obfuscation"),
-                (r'Enable Editing', "Lure to enable editing (social engineering)", "phishing"),
-                (r'\\objdata', "Embedded OLE object", "embedding"),
-                (r'\\bin', "Binary block in RTF", "binary"),
-                (r'\\pict', "Embedded image (can hide shellcode)", "embedding"),
-                (r'objautlink', "Auto-executing object link", "execution"),
-                (r'nonshppict', "Suspicious shape image trigger", "obfuscation"),
-                (r'DDEAUTO|DDE', "DDE execution trigger", "execution"),
-                (r'URLMON\.DLL', "URL handling library (download behavior)", "download"),
-                (r'MSHTML\.DLL', "HTML rendering library (IE exploit)", "exploit"),
-                (r'OLE32\.DLL', "OLE automation trigger", "exploit"),
-                (r'SHELL32\.DLL', "Shell execution from embedded objects", "exploit"),
-                (r'pkgobj|OLE Package', "Executable packaged as embedded object", "embedding"),
-                (r'EQUATION\.3|EQNEDT32', "Equation editor exploit (CVE-2017-11882)", "exploit"),
-                (r'ActiveX|CLSID|ClassID', "Embedded control object", "exploit"),
-                (r'rundll32\.exe', "Shell execution via DLLs", "execution"),
-                (r'cmd\.exe|powershell', "Command-line payloads", "payload"),
-            ]
-
-            for pattern, desc, tag in patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                if matches:
-                    result["verdict_keywords"].add(tag)
-                    result["patterns"].append({
-                        "pattern": pattern[:40],
-                        "description": desc,
-                        "count": len(matches)
-                    })
-
-        except Exception as e:
-            result["error"] = str(e)
-        return result
+            # Use file command as fallback
+            result = subprocess.run(['file', filepath], capture_output=True, text=True)
+            if "Microsoft Word" in result.stdout:
+                return "doc"
+            elif "Microsoft Excel" in result.stdout:
+                return "xlsm"
+            elif "Microsoft PowerPoint" in result.stdout:
+                return "ppt"
+            elif "PDF document" in result.stdout:
+                return "pdf"
+            elif "Rich Text Format" in result.stdout:
+                return "rtf"
+            return "unknown"
+        except:
+            return "unknown"
 
     def analyze_pdf(self, filepath: str) -> Dict[str, Any]:
-        result = {"metadata": {}, "urls": [], "dde_detected": False, "suspicious_keywords": []}
+        result = {
+            "metadata": {},
+            "catalog": [],
+            "suspicious_strings": [],
+            "embedded_files": [],
+            "urls": [],
+            "streams": [],
+            "yara_matches": self.scan_with_yara(filepath)
+        }
+        
         try:
+            # Basic PDF parsing
             with open(filepath, "rb") as f:
                 parser = PDFParser(f)
                 doc = PDFDocument(parser)
+                
+                # Extract metadata
                 if doc.info:
                     result["metadata"] = {str(k): str(v) for k, v in doc.info[0].items()}
+                
+                # Analyze catalog
+                for key in doc.catalog:
+                    if key not in ["Type"]:
+                        result["catalog"].append(key)
+                
+                # Extract text and analyze content
                 output = StringIO()
                 rsrcmgr = PDFResourceManager()
                 device = TextConverter(rsrcmgr, output, laparams=LAParams())
                 interpreter = PDFPageInterpreter(rsrcmgr, device)
+                
+                # Process each page
                 for page in PDFPage.create_pages(doc):
                     interpreter.process_page(page)
-
-                text = output.getvalue()
+                    text = output.getvalue()
+                    
+                    # Check for suspicious strings
+                    for pattern in self.pdf_suspicious_patterns:
+                        if re.search(pattern, text, re.IGNORECASE):
+                            result["suspicious_strings"].append(pattern)
+                    
+                    # Extract URLs
+                    urls = re.findall(r"http[s]?://[a-zA-Z0-9./?=_%:-]*", text)
+                    result["urls"].extend(urls)
+                
                 device.close()
                 output.close()
-
-                result["urls"] = self.fetch_urls(text)
-                result["dde_detected"] = self.detect_dde(text)
-                result["suspicious_keywords"] = self.detect_suspicious_keywords(text)
-
+                
+                # Analyze streams
+                for xref in doc.xrefs:
+                    for obj_id in xref.get_objids():
+                        try:
+                            obj = doc.getobj(obj_id)
+                            if "PDFStream" in str(obj):
+                                stream_data = obj.get_rawdata()
+                                # Check for embedded files
+                                if "EmbeddedFile" in str(obj):
+                                    result["embedded_files"].append({
+                                        "object_id": obj_id,
+                                        "size": len(stream_data)
+                                    })
+                                # Check for suspicious content
+                                if any(pattern.encode() in stream_data for pattern in self.pdf_suspicious_patterns):
+                                    result["streams"].append({
+                                        "object_id": obj_id,
+                                        "suspicious_content": True
+                                    })
+                        except:
+                            continue
+                
         except Exception as e:
             result["error"] = str(e)
+        
         return result
+
+    def detect_suspicious_keywords(self, code: str) -> List[str]:
+        """Detect suspicious keywords in macro code"""
+        found_keywords = []
+        for keyword in self.suspicious_keywords:
+            if keyword in code:
+                found_keywords.append(keyword)
+        return found_keywords
 
     def analyze_office(self, filepath: str) -> Dict[str, Any]:
         result = {
             "is_ole": False,
             "is_encrypted": False,
-            "zip_structure": {},
-            "ole_streams": {},
-            "macros": {}
+            "structure": [],
+            "macros": {
+                "vba_macros": [],
+                "xlm_macros": [],
+                "suspicious_keywords": [],
+                "auto_exec_triggers": [],
+                "extracted_macros": []
+            },
+            "embedded_files": {
+                "ole_objects": [],
+                "extracted_files": []
+            },
+            "urls": [],
+            "ole_streams": [],
+            "doc_specific": {  # New field for DOC-specific analysis
+                "ole_objects": [],
+                "fields": [],
+                "dde_objects": [],
+                "embedded_objects": []
+            },
+            "yara_matches": self.scan_with_yara(filepath)
+        }
+        
+        try:
+            # Check if it's an OLE file
+            result["is_ole"] = isOleFile(filepath)
+            result["is_encrypted"] = is_encrypted(filepath)
+            
+            # If file is encrypted, try to extract what we can
+            if result["is_encrypted"]:
+                print("Warning: File is encrypted. Some analysis may be limited.")
+            
+            # Analyze structure and extract embedded files
+            if zipfile.is_zipfile(filepath):
+                with zipfile.ZipFile(filepath) as zipdoc:
+                    result["structure"] = zipdoc.namelist()
+                    
+                    # Extract and analyze embedded files
+                    for name in zipdoc.namelist():
+                        if "embedding" in name or name.endswith(('.bin', '.exe', '.dll', '.vbs', '.ps1')):
+                            try:
+                                data = zipdoc.read(name)
+                                file_info = {
+                                    "name": name,
+                                    "size": len(data),
+                                    "type": self.binary_analysis(name, data)["type"],
+                                    "content_preview": data[:1000].hex() if len(data) > 1000 else data.hex()
+                                }
+                                result["embedded_files"]["extracted_files"].append(file_info)
+                            except Exception as e:
+                                print(f"Error extracting embedded file {name}: {str(e)}")
+            
+            # Analyze OLE streams and extract OLE objects
+            if result["is_ole"]:
+                ole = OleFileIO(filepath)
+                result["ole_streams"] = ["/".join(stream) for stream in ole.listdir()]
+                
+                # Extract OLE objects and their content
+                for stream in ole.listdir():
+                    try:
+                        data = ole.openstream(stream).read()
+                        # Extract strings from streams
+                        strings = re.findall(rb"[a-zA-Z0-9:/\\._-]{6,}", data)
+                        for s in strings:
+                            if b"http" in s:
+                                result["urls"].append(s.decode('latin1'))
+                        
+                        # Check for OLE objects
+                        if b"OLEObject" in data or b"Package" in data:
+                            ole_obj = {
+                                "stream": "/".join(stream),
+                                "size": len(data),
+                                "content_preview": data[:1000].hex() if len(data) > 1000 else data.hex()
+                            }
+                            result["embedded_files"]["ole_objects"].append(ole_obj)
+                        
+                        # DOC-specific analysis
+                        if b"Word.Document" in data:
+                            # Check for fields
+                            if b"\\fldinst" in data or b"\\fldrslt" in data:
+                                result["doc_specific"]["fields"].append({
+                                    "stream": "/".join(stream),
+                                    "content": data.decode('latin1', errors='ignore')[:1000]
+                                })
+                            
+                            # Check for DDE
+                            if b"\\ddeauto" in data or b"\\dde" in data:
+                                result["doc_specific"]["dde_objects"].append({
+                                    "stream": "/".join(stream),
+                                    "content": data.decode('latin1', errors='ignore')[:1000]
+                                })
+                            
+                            # Check for embedded objects
+                            for pattern in self.doc_suspicious_patterns:
+                                if pattern.encode() in data:
+                                    result["doc_specific"]["embedded_objects"].append({
+                                        "stream": "/".join(stream),
+                                        "type": pattern,
+                                        "content": data.decode('latin1', errors='ignore')[:1000]
+                                    })
+                    except Exception as e:
+                        print(f"Error processing OLE stream {stream}: {str(e)}")
+                ole.close()
+            
+            # Enhanced macro analysis
+            vbaparser = VBA_Parser(filepath)
+            if vbaparser.detect_vba_macros():
+                for (_, _, fname, code) in vbaparser.extract_macros():
+                    # Extract full macro content
+                    full_code = code.strip()
+                    suspicious_keywords = self.detect_suspicious_keywords(full_code)
+                    macro_info = {
+                        "name": fname,
+                        "code_preview": full_code[:1000],
+                        "full_code": full_code,
+                        "suspicious_keywords": suspicious_keywords,
+                        "auto_exec": any(trigger in full_code for trigger in ["AutoOpen", "Document_Open", "Workbook_Open"]),
+                        "has_shell": "WScript.Shell" in full_code or "Shell" in full_code,
+                        "has_download": "URLDownloadToFile" in full_code,
+                        "has_createobject": "CreateObject" in full_code
+                    }
+                    result["macros"]["vba_macros"].append(macro_info)
+                    result["macros"]["suspicious_keywords"].extend(suspicious_keywords)
+                    result["macros"]["extracted_macros"].append({
+                        "name": fname,
+                        "type": "VBA",
+                        "content": full_code
+                    })
+            
+            # Enhanced XLM macro analysis
+            if vbaparser.detect_xlm_macros():
+                for macro in vbaparser.xlm_macros:
+                    full_code = macro.strip()
+                    suspicious_keywords = self.detect_suspicious_keywords(full_code)
+                    macro_info = {
+                        "code_preview": full_code[:1000],
+                        "full_code": full_code,
+                        "suspicious_keywords": suspicious_keywords,
+                        "auto_exec": "AUTO_OPEN" in full_code.upper(),
+                        "has_shell": "SHELL" in full_code.upper(),
+                        "has_download": "DOWNLOAD" in full_code.upper(),
+                        "has_createobject": "CREATEOBJECT" in full_code.upper()
+                    }
+                    result["macros"]["xlm_macros"].append(macro_info)
+                    result["macros"]["suspicious_keywords"].extend(suspicious_keywords)
+                    result["macros"]["extracted_macros"].append({
+                        "name": "XLM_Macro",
+                        "type": "XLM",
+                        "content": full_code
+                    })
+                
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+
+    def analyze_rtf(self, filepath: str) -> Dict[str, Any]:
+        """Analyze RTF document for embedded objects and suspicious content"""
+        result = {
+            "metadata": {},
+            "embedded_objects": [],
+            "ole_objects": [],
+            "dde_objects": [],
+            "suspicious_patterns": [],
+            "urls": [],
+            "macros": [],
+            "yara_matches": self.scan_with_yara(filepath)
         }
         
         try:
             with open(filepath, 'rb') as f:
-                header = f.read(1024)
-                if header.lstrip().startswith(b'{\\rt'):
-                    return self.analyze_rtf(filepath)
-
-            result["is_ole"] = isOleFile(filepath)
-            result["is_encrypted"] = is_encrypted(filepath)
-            result["zip_structure"] = self.analyze_zip_structure(filepath)
-            result["ole_streams"] = self.analyze_ole_streams(filepath)
-            result["macros"] = self.analyze_macros(filepath)
-
+                content = f.read()
+                
+                # Extract metadata
+                metadata_match = re.search(rb'\\info\{([^}]*)\}', content)
+                if metadata_match:
+                    metadata_text = metadata_match.group(1).decode('latin1', errors='ignore')
+                    result["metadata"] = {
+                        "info": metadata_text
+                    }
+                
+                # Check for embedded objects with proper regex escaping
+                for pattern in self.rtf_suspicious_patterns:
+                    # Create a properly escaped pattern for regex
+                    pattern_bytes = pattern.encode()
+                    escaped_pattern = re.escape(pattern_bytes)
+                    
+                    if pattern_bytes in content:
+                        result["suspicious_patterns"].append(pattern)
+                        
+                        # Extract object data with improved regex
+                        obj_pattern = rb'(?:' + escaped_pattern + rb')([^\\\{\}]+)'
+                        for match in re.finditer(obj_pattern, content):
+                            try:
+                                obj_data = match.group(1).decode('latin1', errors='ignore')
+                                if pattern.startswith("\\obj"):
+                                    result["ole_objects"].append({
+                                        "type": pattern,
+                                        "content": obj_data[:1000],  # Preview of content
+                                        "offset": match.start()
+                                    })
+                                elif pattern.startswith("\\dde"):
+                                    result["dde_objects"].append({
+                                        "type": pattern,
+                                        "content": obj_data[:1000],
+                                        "offset": match.start()
+                                    })
+                                else:
+                                    result["embedded_objects"].append({
+                                        "type": pattern,
+                                        "content": obj_data[:1000],
+                                        "offset": match.start()
+                                    })
+                            except Exception as e:
+                                print(f"Error processing object data: {str(e)}")
+                
+                # Extract URLs with improved regex
+                url_patterns = [
+                    rb'\\field\{\\fldinst HYPERLINK "([^"]*)"\}',
+                    rb'\\field\{\\fldinst HYPERLINK ([^}]*)\}',
+                    rb'\\url ([^\\\{\}]+)'
+                ]
+                
+                for pattern in url_patterns:
+                    for match in re.finditer(pattern, content):
+                        try:
+                            url = match.group(1).decode('latin1', errors='ignore')
+                            result["urls"].append({
+                                "url": url,
+                                "offset": match.start()
+                            })
+                        except Exception as e:
+                            print(f"Error processing URL: {str(e)}")
+                
+                # Check for macros with improved regex
+                macro_patterns = [
+                    rb'\\vba\\',
+                    rb'\\mac\\',
+                    rb'\\objocx\\',
+                    rb'\\objupdate\\'
+                ]
+                
+                for pattern in macro_patterns:
+                    for match in re.finditer(pattern, content):
+                        try:
+                            result["macros"].append({
+                                "type": pattern.decode('latin1'),
+                                "found": True,
+                                "offset": match.start()
+                            })
+                        except Exception as e:
+                            print(f"Error processing macro: {str(e)}")
+                
+                # Check for OLE objects with improved regex
+                ole_patterns = [
+                    rb'\\object\\objocx',
+                    rb'\\object\\objupdate',
+                    rb'\\object\\objautlink'
+                ]
+                
+                for pattern in ole_patterns:
+                    for match in re.finditer(pattern, content):
+                        try:
+                            result["ole_objects"].append({
+                                "type": "OLE Object",
+                                "pattern": pattern.decode('latin1'),
+                                "found": True,
+                                "offset": match.start()
+                            })
+                        except Exception as e:
+                            print(f"Error processing OLE object: {str(e)}")
+                
+                # Additional analysis for exploit patterns
+                exploit_patterns = [
+                    rb'\\rtf1\\ansi\\ansicpg1252\\uc1\\deff0\\deflang1033',
+                    rb'\\object\\objocx\\objupdate\\objautlink',
+                    rb'\\objdata'
+                ]
+                
+                for pattern in exploit_patterns:
+                    if pattern in content:
+                        result["suspicious_patterns"].append({
+                            "type": "exploit_pattern",
+                            "pattern": pattern.decode('latin1'),
+                            "found": True
+                        })
+                
+                # Check for CVE-2017-11882 specific patterns
+                cve_patterns = [
+                    rb'\\object\\objocx\\objupdate\\objautlink',
+                    rb'\\objdata\\objocx\\objupdate',
+                    rb'\\objdata\\objocx\\objautlink'
+                ]
+                
+                for pattern in cve_patterns:
+                    if pattern in content:
+                        result["suspicious_patterns"].append({
+                            "type": "CVE-2017-11882_pattern",
+                            "pattern": pattern.decode('latin1'),
+                            "found": True,
+                            "cve": "CVE-2017-11882"
+                        })
+                
         except Exception as e:
             result["error"] = str(e)
+        
         return result
 
-    def analyze_with_gemini(self, analysis_result: Dict[str, Any]) -> Dict[str, str]:
-        prompt = f"""You are a malware detection assistant. You will be given JSON-like output from a static analysis tool for a document file (PDF or DOCX). Your task is to identify and flag **any potentially malicious or suspicious elements**.
-
-Only output your response in valid **JSON format**. Each flag should be a key-value pair where:
-- The **key** is a short description of the issue (e.g., "suspicious macro", "suspicious embedding", "external URL found", etc.)
-- The **value** is a brief explanation of why it's suspicious.
-
-Do **not** include benign or empty values.
-Do **not** assign scores or confidence percentages.
-Only include key-value pairs if there's something **flag-worthy**.
-If nothing is suspicious, return an **empty JSON object**: `{{}}`
-
-Examples of things that should be flagged include:
-- Embedded macros (VBA or XLM)
-- Embedded spreadsheets or OLE files
-- Suspicious keywords like `Run`, `Shell`, `Execute`
-- External URLs in the file
-- DDE (Dynamic Data Exchange) links
-- Encrypted documents
-- Hidden streams or payloads
-
-Here is the input for you to analyze:
-
-{json.dumps(analysis_result, indent=2)}"""
-
-        try:
-            response = self.model.generate_content(prompt)
-            # Extract JSON from the response
-            response_text = response.text
-            # Find JSON object in the response
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start != -1 and json_end != -1:
-                json_str = response_text[json_start:json_end]
-                return json.loads(json_str)
-            return {}
-        except Exception as e:
-            print(f"Error in Gemini analysis: {e}")
-            return {}
-
-    def analyze_document(self, filepath: str, mode: str) -> Dict[str, Any]:
-        if mode == "pdf":
-            analysis_result = self.analyze_pdf(filepath)
-        elif mode == "doc":
-            analysis_result = self.analyze_office(filepath)
-        else:
-            return {"error": "Invalid mode selected"}
-        
-        # Get Gemini's analysis of the results
-        gemini_analysis = self.analyze_with_gemini(analysis_result)
-        
-        return {
-            "raw_analysis": analysis_result,
-            "gemini_analysis": gemini_analysis
+    def binary_analysis(self, filename: str, data: bytes) -> Dict[str, Any]:
+        """Analyze binary data to determine file type and extract information"""
+        result = {
+            "type": "unknown",
+            "is_executable": False,
+            "is_script": False,
+            "suspicious": False
         }
+        
+        # Check file extension
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in ['.exe', '.dll']:
+            result["type"] = "executable"
+            result["is_executable"] = True
+        elif ext in ['.vbs', '.ps1', '.js']:
+            result["type"] = "script"
+            result["is_script"] = True
+        
+        # Check for suspicious patterns
+        suspicious_patterns = [
+            b"MZ",  # Windows executable
+            b"WScript.Shell",
+            b"CreateObject",
+            b"powershell",
+            b"cmd.exe"
+        ]
+        
+        for pattern in suspicious_patterns:
+            if pattern in data:
+                result["suspicious"] = True
+                break
+        
+        return result
+
+    def analyze_document(self, filepath: str) -> Dict[str, Any]:
+        """Analyze document and return results with Gemini analysis"""
+        try:
+            logger.debug("Starting document analysis...")
+            file_type = self.detect_file_type(filepath)
+            logger.debug(f"Detected file type: {file_type}")
+            
+            # Get base analysis result
+            if file_type == "pdf document":
+                logger.debug("Analyzing PDF document...")
+                analysis_result = self.analyze_pdf(filepath)
+            elif file_type in ["ole compound file", "zip archive", "xlsm", "xlsx", "doc"]:
+                logger.debug("Analyzing Office document...")
+                analysis_result = self.analyze_office(filepath)
+            elif file_type == "rtf document":
+                logger.debug("Analyzing RTF document...")
+                analysis_result = self.analyze_rtf(filepath)
+            else:
+                logger.error(f"Unsupported file type: {file_type}")
+                return {"error": f"Unsupported file type: {file_type}"}
+            
+            # Add file type to result
+            # analysis_result["file_type"] = file_type
+            logger.debug(f"Base analysis completed: {analysis_result}")
+            
+            # Get Gemini analysis - FORCE IT TO RUN
+            logger.debug("Starting Gemini analysis...")
+            gemini_result = self.analyze_with_gemini(analysis_result)
+            logger.debug(f"Gemini analysis completed: {gemini_result}")
+            
+            # Create final result with both analyses
+            final_result = {
+                "file_type": file_type,
+                "is_ole": analysis_result.get("is_ole", False),
+                "is_encrypted": analysis_result.get("is_encrypted", False),
+                "structure": analysis_result.get("structure", []),
+                "macros": analysis_result.get("macros", {}),
+                "embedded_files": analysis_result.get("embedded_files", {}),
+                "urls": analysis_result.get("urls", []),
+                "ole_streams": analysis_result.get("ole_streams", []),
+                "doc_specific": analysis_result.get("doc_specific", {}),
+                "yara_matches": analysis_result.get("yara_matches", []),
+                "gemini_analysis": gemini_result,  # Include full Gemini result
+                "error": None
+            }
+            
+            logger.debug(f"Final analysis result: {final_result}")
+            return final_result
+            
+        except Exception as e:
+            logger.error(f"Error in document analysis: {str(e)}")
+            return {"error": str(e)}
+
+    def analyze_with_gemini(self, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze document features using Gemini to detect malware patterns"""
+        try:
+            logger.debug("Starting Gemini analysis with features...")
+            
+            # Load Gemini API key from .env
+            load_dotenv()
+            GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+            if not GEMINI_API_KEY:
+                raise Exception("Gemini API key not found in .env file")
+            
+            # Configure Gemini
+            genai.configure(api_key=GEMINI_API_KEY)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Safely extract analysis data with proper type handling
+            def safe_get(data, key, default=None):
+                if isinstance(data, dict):
+                    return data.get(key, default)
+                return default
+
+            # Prepare the analysis data for the prompt
+            analysis_data = {
+                "file_type": safe_get(analysis_result, "file_type", "unknown"),
+                "is_ole": safe_get(analysis_result, "is_ole", False),
+                "is_encrypted": safe_get(analysis_result, "is_encrypted", False),
+                "macros": safe_get(analysis_result, "macros", {}),
+                "embedded_files": safe_get(analysis_result, "embedded_files", {}),
+                "urls": safe_get(analysis_result, "urls", []),
+                "suspicious_patterns": safe_get(analysis_result, "suspicious_patterns", []),
+                "yara_matches": safe_get(analysis_result, "yara_matches", [])
+            }
+            
+            # Create a detailed prompt for Gemini
+            prompt = f"""
+            You are a malware analysis expert. Analyze this document for potential malware based on the following features:
+            
+            File Type: {analysis_data['file_type']}
+            Is OLE: {analysis_data['is_ole']}
+            Is Encrypted: {analysis_data['is_encrypted']}
+            
+            Macros:
+            - VBA Macros: {len(safe_get(analysis_data['macros'], 'vba_macros', []))}
+            - Suspicious Keywords: {safe_get(analysis_data['macros'], 'suspicious_keywords', [])}
+            - Auto-exec Triggers: {safe_get(analysis_data['macros'], 'auto_exec_triggers', [])}
+            
+            Embedded Files:
+            - OLE Objects: {len(safe_get(analysis_data['embedded_files'], 'ole_objects', []))}
+            - Extracted Files: {len(safe_get(analysis_data['embedded_files'], 'extracted_files', []))}
+            
+            URLs: {analysis_data['urls']}
+            Suspicious Patterns: {analysis_data['suspicious_patterns']}
+            YARA Matches: {analysis_data['yara_matches']}
+            
+            Based on this analysis:
+            1. List suspicious indicators found
+            2. Describe behavioral patterns
+            3. Assess potential impact
+            4. Provide relevant tags
+            5. Give a confidence score (0.0 to 1.0)
+            
+            IMPORTANT: Respond ONLY with a valid JSON object in this exact format:
+            {{
+                "confidence_score": float,
+                "suspicious_indicators": ["string"],
+                "behavioral_patterns": ["string"],
+                "potential_impact": "string",
+                "tags": ["string"],
+                "description": "string"
+            }}
+            
+            Do not include any other text or explanation outside the JSON object.
+            """
+            
+            # Get Gemini's analysis
+            response = model.generate_content(prompt)
+            
+            # Extract the JSON from the response
+            try:
+                # Try to find JSON in the response
+                response_text = response.text
+                # Find the first { and last } to extract the JSON
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                if start != -1 and end != -1:
+                    json_str = response_text[start:end]
+                    gemini_result = json.loads(json_str)
+                else:
+                    raise ValueError("No JSON object found in response")
+            except Exception as e:
+                logger.error(f"Error parsing Gemini response: {str(e)}")
+                # Return a default result if parsing fails
+                gemini_result = {
+                    "confidence_score": 0.0,
+                    "suspicious_indicators": [],
+                    "behavioral_patterns": [],
+                    "potential_impact": "Analysis failed",
+                    "tags": [],
+                    "description": f"Error parsing response: {str(e)}"
+                }
+            
+            logger.debug(f"Gemini analysis completed with result: {gemini_result}")
+            return gemini_result
+            
+        except Exception as e:
+            logger.error(f"Error in Gemini analysis: {str(e)}")
+            return {
+                "confidence_score": 0.0,
+                "suspicious_indicators": [],
+                "behavioral_patterns": [],
+                "potential_impact": "Analysis failed",
+                "tags": [],
+                "description": f"Error during analysis: {str(e)}"
+            }
 
 # For testing purposes
 if __name__ == "__main__":
     analyzer = DocumentAnalyzer()
-    result = analyzer.analyze_document("mal.doc", "doc")
-    print(json.dumps(result, indent=2))
+    result = analyzer.analyze_document("./data/test1.docx")
+    print(json.dumps(result, indent=2)) 
