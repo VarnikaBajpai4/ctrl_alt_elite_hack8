@@ -43,6 +43,19 @@ function DragDropUpload({ onAnalysisStateChange }) {
   }, []);
 
   const validateFile = (file) => {
+    // Check if file is an ELF file by extension
+    const isElfFile = file.name.toLowerCase().endsWith('.elf');
+    
+    // If it's an ELF file, allow it regardless of MIME type
+    if (isElfFile) {
+      if (file.size > maxSize) {
+        setError('File size exceeds 100MB limit.');
+        return false;
+      }
+      return true;
+    }
+
+    // For non-ELF files, check MIME type
     if (!allowedTypes.includes(file.type)) {
       setError('Invalid file type. Please upload executable, document, or script files.');
       return false;
