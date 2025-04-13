@@ -630,7 +630,7 @@ class DocumentAnalyzer:
             if file_type == "pdf document":
                 logger.debug("Analyzing PDF document...")
                 analysis_result = self.analyze_pdf(filepath)
-            elif file_type in ["ole compound file", "zip archive", "xlsm", "xlsx"]:
+            elif file_type in ["ole compound file", "zip archive", "xlsm", "xlsx", "doc"]:
                 logger.debug("Analyzing Office document...")
                 analysis_result = self.analyze_office(filepath)
             elif file_type == "rtf document":
