@@ -267,10 +267,12 @@ async def run_ember_analysis(file_path: Path) -> Dict[str, Any]:
     """Run EMBER analysis on the executable"""
     try:
         logger.info(f"[EMBER] Starting analysis at {datetime.now().strftime('%H:%M:%S')}")
-        data_path = str(DATA_DIR).replace('\\', '/')
+        
+        # Get the directory containing the file
+        file_dir = str(file_path.parent).replace('\\', '/')
         ember_proc = subprocess.run(
             ["docker", "run", "--rm",
-             "-v", f"{data_path}:/data",
+             "-v", f"{file_dir}:/data",  # Mount the directory containing the file
              "-v", f"{EMBER_DIR}:/ember",
              "ember",  # Keep original image name
              "python", "/ember/predict.py", f"/data/{file_path.name}"],
