@@ -134,22 +134,35 @@ async def extract_zip(file_path: Path, extract_dir: Path) -> List[Path]:
 async def process_nested_zip(file_path: Path, extract_dir: Path) -> Optional[Path]:
     """Process nested zip files until a non-zip file is found"""
     current_file = file_path
-    current_dir = extract_dir
+    depth = 0
+    max_depth = 10  # Prevent infinite recursion
     
-    while is_zip_file(current_file):
-        extracted_files = await extract_zip(current_file, current_dir)
-        if not extracted_files:
+    while is_zip_file(current_file) and depth < max_depth:
+        try:
+            # Create a unique filename for the extracted file
+            unique_name = f"extracted_{os.urandom(8).hex()}_{current_file.name}"
+            extract_path = extract_dir / unique_name
+            
+            # Extract the first file from the ZIP
+            with zipfile.ZipFile(current_file, 'r') as zip_ref:
+                # Get the first file in the ZIP
+                first_file = zip_ref.namelist()[0]
+                # Extract it to the unique path
+                zip_ref.extract(first_file, extract_dir)
+                extracted_file = extract_dir / first_file
+                
+                # Rename to our unique name
+                extracted_file.rename(extract_path)
+                current_file = extract_path
+                depth += 1
+                
+        except Exception as e:
+            logger.error(f"Error processing nested ZIP: {str(e)}")
             return None
             
-        # Find the first non-zip file
-        for extracted_file in extracted_files:
-            if not is_zip_file(extracted_file):
-                return extracted_file
-                
-        # If all files are zips, continue with the first one
-        current_file = extracted_files[0]
-        current_dir = current_dir / "nested"
-        os.makedirs(current_dir, exist_ok=True)
+    if depth >= max_depth:
+        logger.warning(f"Reached maximum depth of {max_depth} nested ZIPs")
+        return None
         
     return current_file
 
@@ -438,7 +451,7 @@ async def process_single_file(file: UploadFile, background_tasks: BackgroundTask
     """Process a single file and return its analysis result"""
     try:
         if not file.filename:
-            return {"error": "No file provided"}
+            return {"results": [], "errors": ["No file provided"]}
 
         # Generate unique filename
         unique_filename = f"{os.urandom(8).hex()}_{file.filename}"
@@ -454,15 +467,15 @@ async def process_single_file(file: UploadFile, background_tasks: BackgroundTask
             with open(fp, "wb") as f:
                 content = await file.read()
                 if not content:
-                    return {"error": "Empty file provided"}
+                    return {"results": [], "errors": ["Empty file provided"]}
                 logger.debug(f"File size: {len(content)} bytes")
                 f.write(content)
         except Exception as e:
-            return {"error": f"Failed to save file: {str(e)}"}
+            return {"results": [], "errors": [f"Failed to save file: {str(e)}"]}
 
         # Check if file exists and is accessible
         if not fp.exists():
-            return {"error": f"Failed to save file to {fp}"}
+            return {"results": [], "errors": [f"Failed to save file to {fp}"]}
         
         # Create output directory
         os.makedirs(out_dir, exist_ok=True)
@@ -471,119 +484,201 @@ async def process_single_file(file: UploadFile, background_tasks: BackgroundTask
         file_type = detect_file_type(fp)
         logger.debug(f"Detected file type: {file_type}")
         
-        result = {}
-        if file_type == 'executable':
-            # Handle executables
-            exe_result = await analyze_executable(fp, out_dir)
-            if exe_result.get("error"):
-                result = {
-                    "type": "executable",
-                    "error": exe_result["error"]
-                }
-            else:
-                result = {
-                    "type": "executable",
-                    "ember_probability": exe_result.get("ember_probability", 0.0),
-                    "ember_sha256": exe_result.get("ember_sha256", ""),
-                    "ember_important_features": exe_result.get("ember_important_features", {}),
-                    "static_analysis": exe_result.get("static_analysis", {}),
-                    "malware_categorization": exe_result.get("malware_categorization", {}),
-                    "error": None
-                }
-        elif file_type == 'elf':
-            # Handle ELF files
+        # Handle ZIP files
+        if file_type == 'zip':
             try:
-                extractor = ELFFeatureExtractor()
-                # Load the model
-                model_result = load_model()
-                if model_result.get("error"):
-                    result = {
-                        "type": "elf",
-                        "error": model_result["error"]
+                # Process nested ZIPs until we get a non-ZIP file
+                final_file = await process_nested_zip(fp, out_dir)
+                if final_file is None:
+                    return {
+                        "results": [],
+                        "errors": ["Failed to process nested ZIP file"]
                     }
-                else:
-                    model = model_result["model"]
-                    elf_result = predict_elf_file(str(fp), model, extractor)
-                    
-                    if elf_result.get("error"):
-                        result = {
-                            "type": "elf",
-                            "error": elf_result["error"]
+                
+                # Detect file type of the final file
+                final_file_type = detect_file_type(final_file)
+                logger.debug(f"Processing file {final_file.name} of type {final_file_type}")
+                
+                # Process based on file type
+                if final_file_type == 'executable':
+                    exe_result = await analyze_executable(final_file, out_dir)
+                    if not exe_result.get("error"):
+                        return {
+                            "results": [{
+                                "type": "executable",
+                                "ember_probability": exe_result.get("ember_probability", 0.0),
+                                "ember_sha256": exe_result.get("ember_sha256", ""),
+                                "ember_important_features": exe_result.get("ember_important_features", {}),
+                                "static_analysis": exe_result.get("static_analysis", {}),
+                                "malware_categorization": exe_result.get("malware_categorization", {}),
+                                "error": None
+                            }],
+                            "errors": []
                         }
                     else:
-                        # Convert all numpy types to Python native types
-                        def convert_value(v):
-                            if isinstance(v, (list, np.ndarray)):
-                                return [convert_value(x) for x in v]
-                            elif isinstance(v, str):
-                                return str(v)
-                            elif isinstance(v, np.integer):
-                                return int(v)
-                            elif isinstance(v, (np.floating, float)):
-                                return float(v)
+                        return {
+                            "results": [],
+                            "errors": [f"Error analyzing executable: {exe_result.get('error')}"]
+                        }
+                elif final_file_type == 'elf':
+                    try:
+                        extractor = ELFFeatureExtractor()
+                        model_result = load_model()
+                        if not model_result.get("error"):
+                            model = model_result["model"]
+                            elf_result = predict_elf_file(str(final_file), model, extractor)
+                            if not elf_result.get("error"):
+                                return {
+                                    "results": [{
+                                        "type": "elf",
+                                        "ember_probability": float(elf_result.get("elf_probability", 0.0)),
+                                        "ember_sha256": elf_result.get("sha256", ""),
+                                        "ember_important_features": elf_result.get("elf_features", {}),
+                                        "static_analysis": {},
+                                        "malware_categorization": [],
+                                        "error": None
+                                    }],
+                                    "errors": []
+                                }
                             else:
-                                return v
-                        
-                        # Convert features to Python native types
-                        elf_features = elf_result.get("elf_features", {})
-                        elf_features = {k: convert_value(v) for k, v in elf_features.items()}
-                        
-                        result = {
-                            "type": "elf",
-                            "ember_probability": float(elf_result.get("elf_probability", 0.0)),
-                            "ember_sha256": elf_result.get("sha256", ""),
-                            "ember_important_features": elf_features,
-                            "static_analysis": {},
-                            "malware_categorization": [],
-                            "error": None
+                                return {
+                                    "results": [],
+                                    "errors": [f"Error analyzing ELF file: {elf_result.get('error')}"]
+                                }
+                        else:
+                            return {
+                                "results": [],
+                                "errors": [f"Error loading model for ELF analysis: {model_result.get('error')}"]
+                            }
+                    except Exception as e:
+                        logger.error(f"Error analyzing ELF file: {str(e)}")
+                        return {
+                            "results": [],
+                            "errors": [f"Error analyzing ELF file: {str(e)}"]
+                        }
+                else:
+                    analyzer = DocumentAnalyzer()
+                    doc_result = analyzer.analyze_document(str(final_file))
+                    if not doc_result.get("error"):
+                        return {
+                            "results": [{
+                                "type": final_file_type,
+                                "document_analysis": doc_result,
+                                "ember_probability": 0,
+                                "ember_sha256": "",
+                                "ember_important_features": {},
+                                "static_analysis": {},
+                                "malware_categorization": [],
+                                "error": None
+                            }],
+                            "errors": []
+                        }
+                    else:
+                        return {
+                            "results": [],
+                            "errors": [f"Error analyzing document: {doc_result.get('error')}"]
                         }
             except Exception as e:
-                logger.error(f"Error analyzing ELF file: {str(e)}")
-                result = {
-                    "type": "elf",
-                    "error": f"Error analyzing ELF file: {str(e)}"
+                return {
+                    "results": [],
+                    "errors": [str(e)]
                 }
-        else:
-            # Handle documents using DocumentAnalyzer
-            analyzer = DocumentAnalyzer()
-            doc_result = analyzer.analyze_document(str(fp))
-            if doc_result.get("error"):
-                result = {
-                    "type": file_type,
-                    "error": doc_result["error"]
-                }
+        
+        # Handle non-ZIP files
+        try:
+            result = {}
+            if file_type == 'executable':
+                # Handle executables
+                exe_result = await analyze_executable(fp, out_dir)
+                if exe_result.get("error"):
+                    return {
+                        "results": [],
+                        "errors": [f"Error analyzing executable: {exe_result.get('error')}"]
+                    }
+                else:
+                    result = {
+                        "type": "executable",
+                        "ember_probability": exe_result.get("ember_probability", 0.0),
+                        "ember_sha256": exe_result.get("ember_sha256", ""),
+                        "ember_important_features": exe_result.get("ember_important_features", {}),
+                        "static_analysis": exe_result.get("static_analysis", {}),
+                        "malware_categorization": exe_result.get("malware_categorization", {}),
+                        "error": None
+                    }
+            elif file_type == 'elf':
+                # Handle ELF files
+                try:
+                    extractor = ELFFeatureExtractor()
+                    model_result = load_model()
+                    if model_result.get("error"):
+                        return {
+                            "results": [],
+                            "errors": [f"Error loading model for ELF analysis: {model_result.get('error')}"]
+                        }
+                    else:
+                        model = model_result["model"]
+                        elf_result = predict_elf_file(str(fp), model, extractor)
+                        
+                        if elf_result.get("error"):
+                            return {
+                                "results": [],
+                                "errors": [f"Error analyzing ELF file: {elf_result.get('error')}"]
+                            }
+                        else:
+                            result = {
+                                "type": "elf",
+                                "ember_probability": float(elf_result.get("elf_probability", 0.0)),
+                                "ember_sha256": elf_result.get("sha256", ""),
+                                "ember_important_features": elf_result.get("elf_features", {}),
+                                "static_analysis": {},
+                                "malware_categorization": [],
+                                "error": None
+                            }
+                except Exception as e:
+                    logger.error(f"Error analyzing ELF file: {str(e)}")
+                    return {
+                        "results": [],
+                        "errors": [f"Error analyzing ELF file: {str(e)}"]
+                    }
             else:
-                result = {
-                    "type": file_type,
-                    "document_analysis": doc_result,
-                    "error": None
-                }
+                # Handle documents using DocumentAnalyzer
+                analyzer = DocumentAnalyzer()
+                doc_result = analyzer.analyze_document(str(fp))
+                if doc_result.get("error"):
+                    return {
+                        "results": [],
+                        "errors": [f"Error analyzing document: {doc_result.get('error')}"]
+                    }
+                else:
+                    result = {
+                        "type": file_type,
+                        "document_analysis": doc_result,
+                        "ember_probability": 0,
+                        "ember_sha256": "",
+                        "ember_important_features": {},
+                        "static_analysis": {},
+                        "malware_categorization": [],
+                        "error": None
+                    }
 
-        # Schedule cleanup with a delay to ensure all file handles are closed
-        async def delayed_cleanup():
-            try:
-                # Wait a short time to ensure all file handles are closed
-                await asyncio.sleep(2)
-                if fp.exists():
-                    try:
-                        fp.unlink()
-                    except Exception as e:
-                        logger.warning(f"Failed to delete file {fp}: {str(e)}")
-                if out_dir.exists():
-                    try:
-                        shutil.rmtree(out_dir)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete directory {out_dir}: {str(e)}")
-            except Exception as e:
-                logger.error(f"Error during cleanup: {str(e)}")
+            return {
+                "results": [result],
+                "errors": []
+            }
 
-        # Schedule the delayed cleanup
-        background_tasks.add_task(delayed_cleanup)
-        return result
+        except Exception as e:
+            logger.error(f"Error processing file: {str(e)}")
+            return {
+                "results": [],
+                "errors": [str(e)]
+            }
 
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return {"error": str(e)}
+        return {
+            "results": [],
+            "errors": [str(e)]
+        }
 
 @app.post("/analyze", response_model=MultiFileAnalysisResult)
 async def analyze_files(
@@ -599,26 +694,20 @@ async def analyze_files(
         tasks = [process_single_file(file, background_tasks) for file in files]
         results = await asyncio.gather(*tasks)
 
-        # Separate results and errors
-        analysis_results = []
-        errors = []
+        # Combine all results and errors
+        all_results = []
+        all_errors = []
+        
         for result in results:
-            if "error" in result and result["error"]:
-                errors.append(result["error"])
+            if isinstance(result, dict):
+                if "results" in result:
+                    all_results.extend(result["results"])
+                if "errors" in result:
+                    all_errors.extend(result["errors"])
             else:
-                # Ensure all required fields are present
-                if "type" not in result:
-                    result["type"] = "executable"
-                if "static_analysis" not in result:
-                    result["static_analysis"] = {}
-                if "malware_categorization" not in result:
-                    result["malware_categorization"] = []
-                elif isinstance(result["malware_categorization"], dict):
-                    # Convert dict to list if needed
-                    result["malware_categorization"] = [result["malware_categorization"]]
-                analysis_results.append(result)
+                all_errors.append(f"Unexpected result format: {result}")
 
-        return MultiFileAnalysisResult(results=analysis_results, errors=errors)
+        return MultiFileAnalysisResult(results=all_results, errors=all_errors)
 
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
